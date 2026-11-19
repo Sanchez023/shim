@@ -44,8 +44,11 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
-    "ruff>=0.5.0",
-    "mypy>=1.10.0",
+    # Pinned: scripts/quality_gate.py ratchets against a recorded error count,
+    # so a ruff/mypy upgrade silently turns CI red. Bump these together with
+    # scripts/quality_baseline.json.
+    "ruff==0.17.5",
+    "mypy==2.4.1",
 ]
 # External benchmark adapters (`python -m benchmarks.run --suite humaneval`).
 benchmark = [

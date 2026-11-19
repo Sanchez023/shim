@@ -48,7 +48,7 @@ jobs:
           npm run build
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra channels
 
       - name: Run test suite
         run: uv run pytest -q
@@ -90,7 +90,7 @@ jobs:
           npm run build
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra channels
 
       - name: Run test suite
         run: uv run pytest -q
@@ -129,7 +129,7 @@ jobs:
           npm run build
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra channels
 
       - name: Quality ratchet
         run: uv run python scripts/quality_gate.py

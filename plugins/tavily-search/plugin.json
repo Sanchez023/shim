@@ -1,0 +1,17 @@
+{
+  "name": "tavily-search",
+  "version": "0.1.0",
+  "description": "Tavily web search tool for OpenHarness",
+  "enabled_by_default": true,
+  "variables": {
+    "TAVILY_API_KEY": {
+      "description": "Tavily API key from https://app.tavily.com/",
+      "secret": true,
+      "required": true,
+      "env": "TAVILY_API_KEY"
+    }
+  },
+  "author": {
+    "name": "OpenHarness"
+  }
+}

@@ -1,0 +1,49 @@
+"""Shared constants and type aliases for conversation compaction."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Literal
+
+from openharness.domain.stream_events import CompactProgressEvent
+
+# ---------------------------------------------------------------------------
+# Constants (from Claude Code microCompact.ts / autoCompact.ts)
+# ---------------------------------------------------------------------------
+
+COMPACTABLE_TOOLS: frozenset[str] = frozenset({
+    "read_file",
+    "bash",
+    "grep",
+    "glob",
+    "web_search",
+    "web_fetch",
+    "edit_file",
+    "write_file",
+})
+
+TIME_BASED_MC_CLEARED_MESSAGE = "[Old tool result content cleared]"
+
+# Auto-compact thresholds
+COMPACT_TIMEOUT_SECONDS = 25
+MAX_COMPACT_STREAMING_RETRIES = 2
+MAX_PTL_RETRIES = 3
+SESSION_MEMORY_KEEP_RECENT = 12
+SESSION_MEMORY_MAX_LINES = 48
+SESSION_MEMORY_MAX_CHARS = 4_000
+CONTEXT_COLLAPSE_TEXT_CHAR_LIMIT = 2_400
+CONTEXT_COLLAPSE_HEAD_CHARS = 900
+CONTEXT_COLLAPSE_TAIL_CHARS = 500
+MAX_COMPACT_ATTACHMENTS = 6
+MAX_DISCOVERED_TOOLS = 12
+
+# Microcompact defaults
+DEFAULT_KEEP_RECENT = 5
+DEFAULT_GAP_THRESHOLD_MINUTES = 60
+
+PTL_RETRY_MARKER = "[earlier conversation truncated for compaction retry]"
+ERROR_MESSAGE_INCOMPLETE_RESPONSE = "Compaction interrupted before a complete summary was returned."
+
+CompactTrigger = Literal["auto", "manual", "reactive"]
+CompactProgressCallback = Callable[[CompactProgressEvent], Awaitable[None]]
+CompactionKind = Literal["full", "session_memory"]

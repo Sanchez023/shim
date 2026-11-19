@@ -1,0 +1,9 @@
+{
+  "name": "ssh-remote",
+  "version": "0.1.0",
+  "description": "SSH command execution with ControlMaster connection reuse",
+  "enabled_by_default": true,
+  "author": {
+    "name": "OpenHarness"
+  }
+}

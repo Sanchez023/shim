@@ -1,0 +1,703 @@
+{
+  "benchmark_version": 1,
+  "generated_at": "2026-11-17T08:38:58.871123+00:00",
+  "suite": "core",
+  "mode": "scripted",
+  "external": false,
+  "dataset": {
+    "name": "in-repo synthetic",
+    "size": 18
+  },
+  "model": "scripted",
+  "repeat": 1,
+  "duration_seconds": 7.88,
+  "environment": {
+    "harness_commit": "f3e4beb1dd13afa013c1f050acf9048f7b825cb7",
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26300-SP0"
+  },
+  "totals": {
+    "tasks": 18,
+    "passed": 18,
+    "failed": 0,
+    "attempts": 18,
+    "passed_attempts": 18,
+    "pass_rate": 1.0,
+    "pass_rate_ci95": [
+      0.8241,
+      1.0
+    ],
+    "input_tokens": 18,
+    "output_tokens": 18,
+    "cache_read_input_tokens": 6,
+    "cache_creation_input_tokens": 4
+  },
+  "tasks": [
+    {
+      "id": "readonly-git-no-prompt",
+      "description": "A read-only git pipeline runs without a confirmation prompt",
+      "tags": [
+        "permissions",
+        "bash"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.3,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.3,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "mutating-bash-asks",
+      "description": "A mutating bash command is denied and the file survives",
+      "tags": [
+        "permissions",
+        "bash",
+        "safety"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [
+            {
+              "tool": "bash",
+              "reason": "Mutating tools require user confirmation in default mode. Approve the prompt when asked, or run /permissions full_auto if you want to allow them for this session."
+            }
+          ],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "sensitive-path-asks",
+      "description": "Reading a credential path requires confirmation",
+      "tags": [
+        "permissions",
+        "bash",
+        "safety"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [
+            {
+              "tool": "bash",
+              "reason": "Access to the sensitive credential path C:/Users/dev/AppData/Local/Temp/oh-bench-sensitive-path-asks-4pq1pkdm/.ssh/id_rsa requires confirmation."
+            }
+          ],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "parallel-reads",
+      "description": "Two independent read_file calls execute in one turn",
+      "tags": [
+        "tools"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "read_file",
+            "read_file"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "large-bash-output",
+      "description": "A command larger than the OS pipe buffer completes and truncates",
+      "tags": [
+        "tools",
+        "bash",
+        "regression"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.2,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.2,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "edit-and-test",
+      "description": "The agent edits a buggy function and the test suite passes",
+      "tags": [
+        "tools",
+        "edit",
+        "verification"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.72,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.72,
+          "turns": 4,
+          "tool_calls": [
+            "read_file",
+            "edit_file",
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "plan-ask-harness",
+      "description": "ask_user_question is usable and wired through plan mode",
+      "tags": [
+        "plan",
+        "ask"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "ask_user_question"
+          ],
+          "questions": [
+            {
+              "question": "Where should the cache live?",
+              "options": [
+                "process-local",
+                "shared Redis",
+                "file-backed"
+              ]
+            }
+          ],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "full-auto-credential-denied",
+      "description": "Full auto still refuses a bash read of credential material",
+      "tags": [
+        "permissions",
+        "bash",
+        "safety"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.14,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.14,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "denied-tool-precedence",
+      "description": "An explicit tool deny list wins over auto-approval and never prompts",
+      "tags": [
+        "permissions",
+        "bash"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "max-turns-cutoff",
+      "description": "The loop stops at max_turns instead of running the next scripted turn",
+      "tags": [
+        "runtime",
+        "loop"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.09,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.09,
+          "turns": 1,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "unknown-tool-and-bad-args",
+      "description": "Unknown tools and invalid arguments become error results, not crashes",
+      "tags": [
+        "runtime",
+        "tools",
+        "robustness"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.19,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.19,
+          "turns": 3,
+          "tool_calls": [
+            "nonexistent_tool",
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "usage-accumulates",
+      "description": "Per-turn usage is summed into the run total",
+      "tags": [
+        "runtime",
+        "usage"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 18,
+      "output_tokens": 18,
+      "cache_read_input_tokens": 6,
+      "cache_creation_input_tokens": 4,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "read_file"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 18,
+          "output_tokens": 18,
+          "cache_read_input_tokens": 6,
+          "cache_creation_input_tokens": 4
+        }
+      ]
+    },
+    {
+      "id": "tool-raises-single",
+      "description": "A tool that raises becomes an error result and the loop continues",
+      "tags": [
+        "runtime",
+        "tools",
+        "robustness"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.12,
+          "turns": 2,
+          "tool_calls": [
+            "explode"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "tool-raises-in-batch",
+      "description": "A raising tool in a parallel batch keeps the successful call intact",
+      "tags": [
+        "runtime",
+        "tools",
+        "robustness"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.14,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.14,
+          "turns": 2,
+          "tool_calls": [
+            "explode",
+            "read_file"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "interrupt-cancellation",
+      "description": "Closing the stream mid-tool reports an interrupted turn and no half result",
+      "tags": [
+        "runtime",
+        "interrupt"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.08,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.08,
+          "turns": 1,
+          "tool_calls": [
+            "read_file"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "bash-timeout",
+      "description": "A command exceeding its timeout is killed and reported as an error",
+      "tags": [
+        "runtime",
+        "bash",
+        "timeout"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 2.39,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 2.39,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "compaction-triggers",
+      "description": "Auto-compaction fires once, does not consume a scripted turn, and finishes",
+      "tags": [
+        "runtime",
+        "compaction"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.33,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.33,
+          "turns": 5,
+          "tool_calls": [
+            "read_file",
+            "read_file",
+            "read_file",
+            "read_file"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "id": "artifact-outside-data-dir",
+      "description": "Offloaded tool output lands in the task data dir, not the host data dir",
+      "tags": [
+        "runtime",
+        "tools",
+        "artifacts"
+      ],
+      "passed": true,
+      "pass_rate": 1.0,
+      "passed_attempts": 1,
+      "total_attempts": 1,
+      "failures": [],
+      "mean_duration_seconds": 0.2,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "attempts": [
+        {
+          "passed": true,
+          "failures": [],
+          "duration_seconds": 0.2,
+          "turns": 2,
+          "tool_calls": [
+            "bash"
+          ],
+          "questions": [],
+          "permission_prompts": [],
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

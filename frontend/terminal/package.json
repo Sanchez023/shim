@@ -1,0 +1,25 @@
+{
+  "name": "@openharness/terminal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.tsx",
+    "build": "esbuild src/index.tsx --bundle --platform=node --format=esm --target=node18 --define:process.env.DEV=false --external:react-devtools-core --external:./devtools.js --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\" --outfile=dist/index.js --log-level=warning",
+    "test": "tsx --test --test-timeout=30000 \"src/**/*.test.ts\" \"src/**/*.test.tsx\""
+  },
+  "dependencies": {
+    "ink": "^5.1.0",
+    "ink-text-input": "^6.0.0",
+    "lowlight": "^3.3.0",
+    "marked": "^18.0.0",
+    "react": "^18.3.1",
+    "string-width": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.12",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

@@ -279,6 +279,8 @@ async def test_engine_keepalive_uses_forced_warmup(tmp_path):
 
     await asyncio.wait_for(_wait(), timeout=2.0)
     engine.stop_cache_refresh()
-    await asyncio.sleep(0)
+    # Cancellation is delivered on a later loop iteration, so one sleep(0) is not
+    # enough: wait for the task to finish unwinding before asserting it is done.
+    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=2.0)
     assert task.done()
     assert warmup.calls[-1] is True

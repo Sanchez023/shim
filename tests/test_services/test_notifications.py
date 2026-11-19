@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
 from openharness.config.settings import NotificationSettings
 from openharness.notifications import (
     format_completion_body,
@@ -52,6 +56,10 @@ def test_notification_respects_settings(monkeypatch) -> None:
     assert calls == [("Shim", "done · 5s")]
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="send_notification only reaches the powershell path on Windows",
+)
 def test_windows_notification_uses_notify_icon(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

@@ -36,7 +36,7 @@ The default persona is **Shim**: a functional shim between the user's intent and
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/python-≥3.11-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/React+Ink-TUI-61DAFB?logo=react&logoColor=white" alt="React">
   <img src="https://img.shields.io/badge/pytest-1293_pass-brightgreen" alt="Pytest">
   <img src="https://img.shields.io/badge/E2E-6_suites-orange" alt="E2E">

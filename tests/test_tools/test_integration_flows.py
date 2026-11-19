@@ -181,7 +181,11 @@ async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, 
     )
     assert send_result.is_error is False
 
-    await asyncio.sleep(0.2)
+    # The point of this test is that a message to an already *completed* task
+    # restarts it, so wait for the child to exit rather than guessing with a
+    # sleep: writing while the process is still alive races with its exit and
+    # intermittently loses the follow-up.
+    await _wait_for_terminal_task(task_id)
     for _ in range(80):
         output = await task_output.execute(task_output.input_model(task_id=task_id), context)
         if "AGENT_ECHO:agent ping" in output.output:

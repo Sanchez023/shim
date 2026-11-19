@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Shim — open-source AI coding assistant CLI (formerly OpenHarness)"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "novix-science" },
 ]

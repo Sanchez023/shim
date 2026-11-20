@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import Any
 
 from openharness.swarm.registry import BackendRegistry, get_backend_registry
 from openharness.swarm.subprocess_backend import SubprocessBackend
@@ -59,7 +60,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily load POSIX-only swarm helpers when they are actually used."""
     target = _LAZY_EXPORTS.get(name)
     if target is None:

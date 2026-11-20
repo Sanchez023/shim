@@ -290,15 +290,17 @@ class BackgroundTaskManager:
         payload = _encode_task_worker_payload(data)
         async with self._input_locks[task_id]:
             process = await self._ensure_writable_process(task)
-            process.stdin.write(payload)
+            stdin = _require_process_stdin(process)
+            stdin.write(payload)
             try:
-                await process.stdin.drain()
+                await stdin.drain()
             except (BrokenPipeError, ConnectionResetError):
                 if task.type not in {"local_agent", "remote_agent", "in_process_teammate"}:
                     raise ValueError(f"Task {task_id} does not accept input") from None
                 process = await self._restart_agent_task(task)
-                process.stdin.write(payload)
-                await process.stdin.drain()
+                stdin = _require_process_stdin(process)
+                stdin.write(payload)
+                await stdin.drain()
 
     def read_task_output(self, task_id: str, *, max_bytes: int = 12000) -> str:
         """Return the tail of a task's output file."""
@@ -549,6 +551,14 @@ def _task_id(task_type: TaskType) -> str:
         "dream": "d",
     }
     return f"{prefixes[task_type]}{uuid4().hex[:8]}"
+
+
+def _require_process_stdin(process: asyncio.subprocess.Process) -> asyncio.StreamWriter:
+    """Return the child's stdin pipe, or raise when it has none."""
+    stdin = process.stdin
+    if stdin is None:
+        raise ValueError(f"Task process {process.pid} has no stdin pipe")
+    return stdin
 
 
 async def _close_process_stdin(process: asyncio.subprocess.Process) -> None:

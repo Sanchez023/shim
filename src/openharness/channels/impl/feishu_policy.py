@@ -52,7 +52,7 @@ def _mention_id_value(raw_id: Any, key: str) -> Any:
 
 
 def _extract_feishu_mentions(
-    content_json: dict,
+    content_json: dict[str, Any],
     raw_mentions: list[Any] | tuple[Any, ...] | None = None,
 ) -> list[dict[str, str]]:
     """Return normalized mention metadata from Feishu text/post payloads."""
@@ -104,7 +104,7 @@ def _extract_feishu_mentions(
 
 
 def _feishu_mentions_bot(
-    content_json: dict,
+    content_json: dict[str, Any],
     text: str,
     config: FeishuConfig,
     *,

@@ -60,7 +60,8 @@ def _load_creds_file() -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        stored: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        return stored
     except (json.JSONDecodeError, OSError) as exc:
         log.warning("Failed to read credentials file: %s", exc)
         return {}
@@ -153,14 +154,20 @@ def load_credential(provider: str, key: str, *, use_keyring: bool | None = None)
         try:
             import keyring
 
-            value = keyring.get_password(_KEYRING_SERVICE, _keyring_key(provider, key))
-            if value is not None:
-                return value
+            stored: str | None = keyring.get_password(
+                _KEYRING_SERVICE, _keyring_key(provider, key)
+            )
+            if stored is not None:
+                return stored
         except Exception as exc:
             log.warning("Keyring load failed, falling back to file: %s", exc)
 
     data = _load_creds_file()
-    return data.get(provider, {}).get(key)
+    provider_creds = data.get(provider)
+    if not isinstance(provider_creds, dict):
+        return None
+    value = provider_creds.get(key)
+    return value if isinstance(value, str) else None
 
 
 def clear_credential(provider: str, key: str, *, use_keyring: bool | None = None) -> bool:

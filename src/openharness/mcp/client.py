@@ -13,6 +13,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ReadResourceResult
+from pydantic import AnyUrl
 
 from openharness.domain.messages import ImageBlock
 from openharness.mcp.types import (
@@ -93,12 +94,15 @@ class McpClientManager:
             elif isinstance(config, McpHttpServerConfig):
                 await self._connect_http(name, config)
             else:
+                # Unknown / unsupported config objects still report the
+                # transport they declared, if any.
+                transport = str(getattr(config, "type", "unknown"))
                 self._statuses[name] = McpConnectionStatus(
                     name=name,
                     state="failed",
-                    transport=config.type,
+                    transport=transport,
                     auth_configured=bool(getattr(config, "headers", None)),
-                    detail=f"Unsupported MCP transport in current build: {config.type}",
+                    detail=f"Unsupported MCP transport in current build: {transport}",
                 )
 
     async def reconnect_all(self) -> None:
@@ -232,7 +236,7 @@ class McpClientManager:
                 f"MCP server '{server_name}' is not connected: {detail}"
             )
         try:
-            result: ReadResourceResult = await session.read_resource(uri)
+            result: ReadResourceResult = await session.read_resource(AnyUrl(uri))
         except Exception as exc:
             raise McpServerNotConnectedError(
                 f"MCP server '{server_name}' resource read failed: {exc}"

@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Protocol, cast
 
 from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import Config
 
 logger = logging.getLogger(__name__)
+
+
+class _ErrorRecordingChannel(Protocol):
+    """Structural view of channels that expose why they failed to start.
+
+    ``last_error`` is an opt-in attribute implemented by individual channels
+    (e.g. the Telegram channel) for health/status reporting; it is not part of
+    the shared :class:`BaseChannel` surface, so it is declared here.
+    """
+
+    last_error: str | None
 
 
 class ChannelManager:
@@ -27,7 +38,7 @@ class ChannelManager:
         self.config = config
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
-        self._dispatch_task: asyncio.Task | None = None
+        self._dispatch_task: asyncio.Task[Any] | None = None
 
         self._init_channels()
 
@@ -164,7 +175,7 @@ class ChannelManager:
         try:
             await channel.start()
         except Exception as e:
-            channel.last_error = str(e)
+            cast(_ErrorRecordingChannel, channel).last_error = str(e)
             logger.exception("Failed to start channel %s", name)
 
     async def start_all(self) -> None:

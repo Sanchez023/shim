@@ -19,9 +19,9 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from openharness.swarm.mailbox import get_team_dir
 from openharness.swarm.types import BackendType
@@ -508,9 +508,7 @@ def set_member_mode(
     # Immutably update
     for k, m in team_file.members.items():
         if m.name == member_name:
-            team_file.members[k] = TeamMember(
-                **{**m.to_dict(), "mode": mode}  # type: ignore[arg-type]
-            )
+            team_file.members[k] = replace(m, mode=mode)
             break
 
     write_team_file(team_name, team_file)
@@ -558,9 +556,7 @@ def set_multiple_member_modes(
     for k, m in list(team_file.members.items()):
         new_mode = update_map.get(m.name)
         if new_mode is not None and m.mode != new_mode:
-            team_file.members[k] = TeamMember(
-                **{**m.to_dict(), "mode": new_mode}  # type: ignore[arg-type]
-            )
+            team_file.members[k] = replace(m, mode=new_mode)
             any_changed = True
 
     if any_changed:
@@ -598,9 +594,7 @@ async def set_member_active(
 
     for k, m in list(team_file.members.items()):
         if m.name == member_name:
-            team_file.members[k] = TeamMember(
-                **{**m.to_dict(), "is_active": is_active}  # type: ignore[arg-type]
-            )
+            team_file.members[k] = replace(m, is_active=is_active)
             break
 
     await write_team_file_async(team_name, team_file)
@@ -626,6 +620,20 @@ def register_team_for_session_cleanup(team_name: str) -> None:
 def unregister_team_for_session_cleanup(team_name: str) -> None:
     """Remove a team from session cleanup tracking (e.g. after explicit delete)."""
     _session_created_teams.discard(team_name)
+
+
+@runtime_checkable
+class _PaneKillingExecutor(Protocol):
+    """Structural view of a backend executor that can close terminal panes.
+
+    :class:`~openharness.swarm.types.TeammateExecutor` deliberately stays
+    minimal; pane teardown is an optional capability, so callers narrow to this
+    protocol before asking a backend to kill a pane.
+    """
+
+    async def kill_pane(self, pane_id: str, *, use_external_session: bool = False) -> bool:
+        """Kill / close *pane_id*, returning True on success."""
+        ...
 
 
 async def _kill_orphaned_teammate_panes(team_name: str) -> None:
@@ -662,6 +670,13 @@ async def _kill_orphaned_teammate_panes(team_name: str) -> None:
     async def _kill_one(member: TeamMember) -> None:
         try:
             executor = registry.get_executor(member.backend_type)
+            if not isinstance(executor, _PaneKillingExecutor):
+                logger.debug(
+                    "Backend %s cannot kill panes; skipping %s",
+                    member.backend_type,
+                    member.name,
+                )
+                return
             await executor.kill_pane(
                 member.tmux_pane_id,
                 use_external_session=use_external_session,

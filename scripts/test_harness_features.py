@@ -34,7 +34,7 @@ def _run_oh(*args: str, timeout: int = 90) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "openharness", *args]
     return subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout,
-        env=_env(), cwd=str(PROJECT_ROOT),
+        env=_env(), cwd=str(PROJECT_ROOT), check=False,
     )
 
 

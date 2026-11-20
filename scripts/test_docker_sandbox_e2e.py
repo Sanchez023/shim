@@ -94,6 +94,21 @@ async def _run_and_capture(session: DockerSandboxSession, argv: list[str], cwd: 
     )
 
 
+def _docker_capture(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run a docker CLI command synchronously and return the completed process.
+
+    Kept as a module-level sync helper so async test bodies do not issue
+    blocking process calls inside the event loop; callers assert on the
+    captured output themselves, so a non-zero exit is not raised here.
+    """
+    return subprocess.run(
+        [_DOCKER or "docker", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -124,6 +139,7 @@ class TestImageManagement:
         result = subprocess.run(
             [_DOCKER, "image", "inspect", e2e_image],
             capture_output=True,
+            check=False,
         )
         assert result.returncode == 0, "E2E image should exist after build"
 
@@ -133,6 +149,7 @@ class TestImageManagement:
             result = subprocess.run(
                 [_DOCKER, "run", "--rm", e2e_image, "which", tool],
                 capture_output=True,
+                check=False,
             )
             assert result.returncode == 0, f"{tool} should be available in the image"
 
@@ -154,23 +171,19 @@ class TestContainerLifecycle:
             assert session.is_running
 
             # Verify container is visible
-            result = subprocess.run(
-                [_DOCKER, "ps", "--filter", f"name={session.container_name}", "-q"],
-                capture_output=True,
-                text=True,
-            )
-            assert result.stdout.strip(), "Container should appear in docker ps"
+            listed = _docker_capture(
+                "ps", "--filter", f"name={session.container_name}", "-q",
+            ).stdout
+            assert listed.strip(), "Container should appear in docker ps"
 
             await session.stop()
             assert not session.is_running
 
             # Verify container is gone (--rm flag auto-removes)
-            result = subprocess.run(
-                [_DOCKER, "ps", "-a", "--filter", f"name={session.container_name}", "-q"],
-                capture_output=True,
-                text=True,
-            )
-            assert not result.stdout.strip(), "Container should be removed after stop"
+            remaining = _docker_capture(
+                "ps", "-a", "--filter", f"name={session.container_name}", "-q",
+            ).stdout
+            assert not remaining.strip(), "Container should be removed after stop"
 
         asyncio.run(_run())
 
@@ -214,7 +227,7 @@ class TestCommandExecution:
         async def _run():
             await session.start()
             try:
-                rc, stdout, stderr = await _run_and_capture(
+                rc, stdout, _stderr = await _run_and_capture(
                     session, ["echo", "hello-from-sandbox"], project_dir,
                 )
                 assert rc == 0
@@ -253,7 +266,7 @@ class TestCommandExecution:
         async def _run():
             await session.start()
             try:
-                rc, stdout, _ = await _run_and_capture(
+                _rc, _stdout, _ = await _run_and_capture(
                     session,
                     ["bash", "-c", "echo $MY_TEST_VAR"],
                     project_dir,
@@ -434,14 +447,14 @@ class TestNetworkIsolation:
             await session.start()
             try:
                 # With bridge network, DNS resolution should work
-                rc, stdout, _ = await _run_and_capture(
+                _rc, _stdout, _ = await _run_and_capture(
                     session,
                     ["bash", "-c", "getent hosts github.com 2>/dev/null && echo DNS_OK || echo DNS_FAIL"],
                     project_dir,
                 )
                 # getent may not be installed in slim image; check if we at least
                 # have network interfaces beyond loopback
-                rc2, stdout2, _ = await _run_and_capture(
+                _rc2, stdout2, _ = await _run_and_capture(
                     session,
                     ["bash", "-c", "cat /proc/net/route | wc -l"],
                     project_dir,
@@ -471,14 +484,12 @@ class TestResourceLimits:
         async def _run():
             await session.start()
             try:
-                result = subprocess.run(
-                    [_DOCKER, "inspect", "--format", "{{.HostConfig.NanoCpus}}",
-                     session.container_name],
-                    capture_output=True,
-                    text=True,
-                )
+                nano_cpus = _docker_capture(
+                    "inspect", "--format", "{{.HostConfig.NanoCpus}}",
+                    session.container_name,
+                ).stdout
                 # Docker stores NanoCpus as int nanoseconds: 1.5 CPUs = 1_500_000_000
-                nano = int(result.stdout.strip())
+                nano = int(nano_cpus.strip())
                 assert nano == 1_500_000_000, f"Expected 1.5 CPUs (1500000000 nano), got {nano}"
             finally:
                 await session.stop()
@@ -495,13 +506,11 @@ class TestResourceLimits:
         async def _run():
             await session.start()
             try:
-                result = subprocess.run(
-                    [_DOCKER, "inspect", "--format", "{{.HostConfig.Memory}}",
-                     session.container_name],
-                    capture_output=True,
-                    text=True,
-                )
-                mem_bytes = int(result.stdout.strip())
+                mem_output = _docker_capture(
+                    "inspect", "--format", "{{.HostConfig.Memory}}",
+                    session.container_name,
+                ).stdout
+                mem_bytes = int(mem_output.strip())
                 expected = 256 * 1024 * 1024  # 256 MiB
                 assert mem_bytes == expected, f"Expected {expected} bytes, got {mem_bytes}"
             finally:

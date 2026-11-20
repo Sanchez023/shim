@@ -163,7 +163,7 @@ def test_no_headless_flag() -> tuple[bool, str]:
     result = subprocess.run(
         [sys.executable, "-m", "openharness", "--help"],
         capture_output=True, text=True, timeout=10,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(PROJECT_ROOT), check=False,
     )
     if "--headless" in result.stdout:
         return False, "--headless still present in --help output"

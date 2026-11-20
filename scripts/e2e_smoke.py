@@ -177,8 +177,8 @@ def _setup_plugin_combo_flow(cwd: Path, _: Path) -> None:
     )
     (plugin_dir / "mcp.json").write_text(
         (
-            '{"mcpServers":{"fixture":{"type":"stdio","command":"%s","args":["%s"]}}}\n'
-            % (sys.executable, str(FIXTURE_SERVER))
+            '{"mcpServers":{"fixture":{"type":"stdio",'
+            f'"command":"{sys.executable}","args":["{FIXTURE_SERVER}"]}}}}}}\n'
         ),
         encoding="utf-8",
     )

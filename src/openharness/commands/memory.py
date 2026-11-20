@@ -17,6 +17,7 @@ from openharness.memory import (
     scan_memory_files,
 )
 from openharness.memory.agent import (
+    AgentMemoryScope,
     ensure_agent_memory_vault,
     get_agent_memory_entrypoint,
     initialize_agent_memory_from_snapshot,
@@ -25,6 +26,8 @@ from openharness.memory.schema import (
     DEFAULT_MEMORY_SCOPE,
     DEFAULT_MEMORY_TYPE,
     MEMORY_TYPES,
+    MemoryScope,
+    MemoryType,
     parse_memory_scope,
     parse_memory_type,
 )
@@ -65,7 +68,7 @@ def _handle_memory_edit_command(
     return CommandResult(message=f"Edited memory file: {target}")
 
 
-def _parse_memory_add_flags(args: str):
+def _parse_memory_add_flags(args: str) -> tuple[MemoryType, MemoryScope, str]:
     """Parse optional ``/memory add`` type/scope flags."""
 
     memory_type = DEFAULT_MEMORY_TYPE
@@ -170,17 +173,24 @@ def _handle_memory_team_command(args: str, context: CommandContext) -> CommandRe
     )
 
 
+_AGENT_MEMORY_SCOPES: dict[str, AgentMemoryScope] = {
+    "user": "user",
+    "project": "project",
+    "local": "local",
+}
+
+
 def _handle_memory_agent_command(args: str, context: CommandContext) -> CommandResult:
     parts = args.split()
     action = parts[0] if parts else "status"
     agent_type = parts[1] if len(parts) > 1 else "default"
-    scope = parts[2] if len(parts) > 2 else "project"
-    if scope not in {"user", "project", "local"}:
+    scope = _AGENT_MEMORY_SCOPES.get(parts[2] if len(parts) > 2 else "project")
+    if scope is None:
         return CommandResult(message="Agent memory scope must be one of: user, project, local")
     if action == "snapshot":
-        target = initialize_agent_memory_from_snapshot(context.cwd, agent_type, scope)  # type: ignore[arg-type]
+        target = initialize_agent_memory_from_snapshot(context.cwd, agent_type, scope)
         return CommandResult(message=f"Initialized agent memory from snapshot: {target}" if target else "No snapshot found.")
-    vault = ensure_agent_memory_vault(context.cwd, agent_type, scope)  # type: ignore[arg-type]
+    vault = ensure_agent_memory_vault(context.cwd, agent_type, scope)
     return CommandResult(
         message=(
             "Agent memory:\n"

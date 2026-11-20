@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from types import UnionType
-from typing import TYPE_CHECKING, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Literal, TypeAlias, Union, get_args, get_origin
 
 import pyperclip
 
@@ -19,6 +19,9 @@ from openharness.skills.types import SkillDefinition
 
 if TYPE_CHECKING:
     from openharness.commands.registry import CommandRegistry
+
+#: Scalar settings coerced from a ``/config set`` CLI string.
+CoercedSetting: TypeAlias = bool | int | float | str | list[str]
 
 
 def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
@@ -124,7 +127,7 @@ def _settings_json_for_display(settings: Settings) -> str:
     return json.dumps(_redact_config_value(settings.model_dump()), indent=2, default=str)
 
 
-def _coerce_setting_value(settings: Settings, key: str, raw: str):
+def _coerce_setting_value(settings: Settings, key: str, raw: str) -> CoercedSetting:
     field = Settings.model_fields.get(key)
     if field is None:
         raise KeyError(key)
@@ -145,7 +148,7 @@ def _strip_optional(annotation: object) -> object:
         return resolved
 
 
-def _coerce_annotation_value(annotation: object, key: str, raw: str):
+def _coerce_annotation_value(annotation: object, key: str, raw: str) -> CoercedSetting:
     """Coerce a CLI string into the declared type of *annotation*.
 
     The declared type is authoritative: inferring from the current value breaks
@@ -239,15 +242,10 @@ async def _skill_command_handler(args: str, context: CommandContext, *, skill_na
 
 
 def _make_skill_slash_command(skill_name: str, description: str) -> SlashCommand:
-    return SlashCommand(
-        skill_name,
-        description,
-        lambda args, context, skill_name=skill_name: _skill_command_handler(
-            args,
-            context,
-            skill_name=skill_name,
-        ),
-    )
+    async def _handler(args: str, context: CommandContext) -> CommandResult:
+        return await _skill_command_handler(args, context, skill_name=skill_name)
+
+    return SlashCommand(skill_name, description, _handler)
 
 
 def lookup_skill_slash_command(raw_input: str, context: CommandContext) -> tuple[SlashCommand, str] | None:

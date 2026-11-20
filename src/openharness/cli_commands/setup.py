@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -20,8 +21,12 @@ from openharness.cli_prompts import (
     _text_prompt,
 )
 
+if TYPE_CHECKING:
+    from openharness.auth.manager import AuthManager
+    from openharness.config.provider_types import ProviderProfile
 
-def _prompt_model_for_profile(profile) -> str:
+
+def _prompt_model_for_profile(profile: ProviderProfile) -> str:
     from openharness.config.settings import (
         CLAUDE_MODEL_ALIAS_OPTIONS,
         display_model_setting,
@@ -77,6 +82,7 @@ def _select_setup_workflow(
             label = str(info["label"])
             hint = hints.get(name)
             missing = _styled_missing_suffix(info)
+            title: str | list[tuple[str, str]]
             if hint is None:
                 if missing is None:
                     title = label
@@ -120,7 +126,7 @@ def _prompt_api_key_for_profile(label: str) -> str:
         raise typer.BadParameter("API key cannot be empty.")
     return key
 
-def _configure_custom_profile_via_setup(manager) -> str:
+def _configure_custom_profile_via_setup(manager: AuthManager) -> str:
     from openharness.config.settings import ProviderProfile, default_auth_source_for_provider
 
     family = _select_from_menu(
@@ -161,7 +167,7 @@ def _configure_custom_profile_via_setup(manager) -> str:
     return name
 
 def _ensure_preset_profile(
-    manager,
+    manager: AuthManager,
     *,
     name: str,
     label: str,
@@ -189,7 +195,7 @@ def _ensure_preset_profile(
     manager.upsert_profile(name, profile)
     return name
 
-def _specialize_setup_target(manager, target: str) -> str:
+def _specialize_setup_target(manager: AuthManager, target: str) -> str:
     """Expand a top-level family choice into a concrete workflow profile."""
     from openharness.config.settings import default_auth_source_for_provider
 

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import TYPE_CHECKING
 
 import typer
 
 from openharness.cli_prompts import _confirm_prompt
+
+if TYPE_CHECKING:
+    from openharness.auth.manager import AuthManager
 
 _PROVIDER_LABELS: dict[str, str] = {
     "anthropic": "Anthropic (Claude API)",
@@ -48,7 +52,7 @@ def _default_credential_slot_for_profile(name: str, auth_source: str) -> str | N
         return None
     return name
 
-def _ensure_profile_auth(manager, profile_name: str) -> None:
+def _ensure_profile_auth(manager: AuthManager, profile_name: str) -> None:
     from openharness.auth.flows import ApiKeyFlow
     from openharness.config.settings import auth_source_provider_name, auth_source_uses_api_key
 
@@ -69,7 +73,7 @@ def _ensure_profile_auth(manager, profile_name: str) -> None:
     manager.store_profile_credential(profile_name, "api_key", key)
     print(f"{profile.label} API key saved.", flush=True)
 
-def _maybe_update_profile_auth(manager, profile_name: str) -> bool:
+def _maybe_update_profile_auth(manager: AuthManager, profile_name: str) -> bool:
     """Ask whether to replace an already configured profile API key."""
     from openharness.config.settings import auth_source_uses_api_key
 

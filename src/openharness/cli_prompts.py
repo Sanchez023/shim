@@ -49,7 +49,8 @@ def _text_prompt(message: str, *, default: str = "") -> str:
         if result is None:
             raise typer.Abort()
         return str(result)
-    return typer.prompt(message, default=default)
+    answer: str = typer.prompt(message, default=default)
+    return answer
 
 def _secret_prompt(message: str) -> str:
     """Prompt for secret text, preferring questionary in a real TTY."""
@@ -60,7 +61,8 @@ def _secret_prompt(message: str) -> str:
         if result is None:
             raise typer.Abort()
         return str(result)
-    return typer.prompt(message, hide_input=True)
+    answer: str = typer.prompt(message, hide_input=True)
+    return answer
 
 def _confirm_prompt(message: str, *, default: bool = False) -> bool:
     """Prompt for a yes/no confirmation, preferring questionary in a real TTY."""

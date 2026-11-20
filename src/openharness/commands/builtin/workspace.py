@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from openharness.autopilot import RepoAutopilotStore
+from openharness.autopilot import RepoAutopilotStore, RepoTaskCard, RepoTaskSource, RepoTaskStatus
 from openharness.bridge import get_bridge_manager
 from openharness.bridge.types import WorkSecret
 from openharness.bridge.work_secret import build_sdk_url, decode_work_secret, encode_work_secret
@@ -38,6 +38,42 @@ from openharness.tasks.summary import (
 
 if TYPE_CHECKING:
     from openharness.commands.registry import CommandRegistry
+
+#: Autopilot card statuses in display order, keyed by their own name.
+_TASK_STATUS_BY_NAME: dict[str, RepoTaskStatus] = {
+    "queued": "queued",
+    "accepted": "accepted",
+    "preparing": "preparing",
+    "running": "running",
+    "verifying": "verifying",
+    "pr_open": "pr_open",
+    "waiting_ci": "waiting_ci",
+    "repairing": "repairing",
+    "completed": "completed",
+    "merged": "merged",
+    "failed": "failed",
+    "rejected": "rejected",
+    "superseded": "superseded",
+}
+
+#: Slash-command spellings for ``/autopilot add SOURCE``.
+_TASK_SOURCES: dict[str, RepoTaskSource] = {
+    "idea": "manual_idea",
+    "manual": "manual_idea",
+    "ohmo": "ohmo_request",
+    "issue": "github_issue",
+    "pr": "github_pr",
+    "claude": "claude_code_candidate",
+}
+
+#: Slash-command spellings for the status transitions on a card.
+_TASK_TRANSITIONS: dict[str, RepoTaskStatus] = {
+    "accept": "accepted",
+    "start": "running",
+    "complete": "completed",
+    "fail": "failed",
+    "reject": "rejected",
+}
 
 
 def register_workspace_commands(registry: CommandRegistry) -> None:
@@ -384,7 +420,7 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
             return CommandResult(message=f"Current branch: {current or '(detached HEAD)'}")
         if action == "list":
             ok, branches = _run_git_command(context.cwd, "branch", "--format", "%(refname:short)")
-            return CommandResult(message=branches if ok else branches)
+            return CommandResult(message=branches)
         return CommandResult(message="Usage: /branch [show|list]")
 
     async def _commit_handler(args: str, context: CommandContext) -> CommandResult:
@@ -401,7 +437,7 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
         if not ok:
             return CommandResult(message=output)
         ok, output = _run_git_command(context.cwd, "commit", "-m", message)
-        return CommandResult(message=output if ok else output)
+        return CommandResult(message=output)
 
     async def _tasks_handler(args: str, context: CommandContext) -> CommandResult:
         manager = get_task_manager()
@@ -425,10 +461,10 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
             task = await manager.stop_task(tokens[1])
             return CommandResult(message=f"Stopped task {task.id}")
         if tokens[0] == "show" and len(tokens) == 2:
-            task = manager.get_task(tokens[1])
-            if task is None:
+            found = manager.get_task(tokens[1])
+            if found is None:
                 return CommandResult(message=f"No task found with ID: {tokens[1]}")
-            return CommandResult(message=str(task))
+            return CommandResult(message=str(found))
         if tokens[0] == "update" and len(tokens) == 3:
             task_id = tokens[1]
             rest = tokens[2]
@@ -470,7 +506,7 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
         tokens = args.split()
         action = tokens[0].lower() if tokens else "status"
 
-        def _render_card(card) -> str:
+        def _render_card(card: RepoTaskCard) -> str:
             lines = [
                 f"{card.id} [{card.status}] score={card.score} {card.title}",
                 f"source={card.source_kind} ref={card.source_ref or '-'}",
@@ -487,21 +523,7 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
             counts = store.stats()
             active = store.pick_next_card()
             lines = ["Autopilot queue status:"]
-            for status_name in (
-                "queued",
-                "accepted",
-                "preparing",
-                "running",
-                "verifying",
-                "pr_open",
-                "waiting_ci",
-                "repairing",
-                "completed",
-                "merged",
-                "failed",
-                "rejected",
-                "superseded",
-            ):
+            for status_name in _TASK_STATUS_BY_NAME:
                 lines.append(f"- {status_name}: {counts.get(status_name, 0)}")
             lines.append(f"- registry: {store.registry_path}")
             lines.append(f"- journal: {store.journal_path}")
@@ -511,23 +533,10 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
             return CommandResult(message="\n".join(lines))
 
         if action == "list":
-            status = tokens[1].lower() if len(tokens) >= 2 else None
-            if status is not None and status not in {
-                "queued",
-                "accepted",
-                "preparing",
-                "running",
-                "verifying",
-                "pr_open",
-                "waiting_ci",
-                "repairing",
-                "completed",
-                "merged",
-                "failed",
-                "rejected",
-                "superseded",
-            }:
-                return CommandResult(message=f"Unknown autopilot status: {status}")
+            requested = tokens[1].lower() if len(tokens) >= 2 else None
+            status = _TASK_STATUS_BY_NAME.get(requested) if requested is not None else None
+            if requested is not None and status is None:
+                return CommandResult(message=f"Unknown autopilot status: {requested}")
             cards = store.list_cards(status=status)
             if not cards:
                 return CommandResult(message="No autopilot cards.")
@@ -577,18 +586,10 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
                         "[idea|ohmo|issue|pr|claude] TITLE :: DETAILS"
                     )
                 )
-            source_kind = "manual_idea"
-            source_map = {
-                "idea": "manual_idea",
-                "manual": "manual_idea",
-                "ohmo": "ohmo_request",
-                "issue": "github_issue",
-                "pr": "github_pr",
-                "claude": "claude_code_candidate",
-            }
+            source_kind: RepoTaskSource = "manual_idea"
             if " " in raw:
                 first, remainder = raw.split(" ", 1)
-                mapped = source_map.get(first.lower())
+                mapped = _TASK_SOURCES.get(first.lower())
                 if mapped is not None:
                     source_kind = mapped
                     raw = remainder.strip()
@@ -611,18 +612,11 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
             )
 
         if action in {"accept", "start", "complete", "reject", "fail"} and len(tokens) >= 2:
-            status_map = {
-                "accept": "accepted",
-                "start": "running",
-                "complete": "completed",
-                "fail": "failed",
-                "reject": "rejected",
-            }
             note = ""
             if len(tokens) >= 3:
                 note = args.split(maxsplit=2)[2]
             try:
-                card = store.update_status(tokens[1], status=status_map[action], note=note or None)
+                card = store.update_status(tokens[1], status=_TASK_TRANSITIONS[action], note=note or None)
             except ValueError as exc:
                 return CommandResult(message=str(exc))
             return CommandResult(message=f"{card.id} -> {card.status}: {card.title}")
@@ -642,16 +636,16 @@ def register_workspace_commands(registry: CommandRegistry) -> None:
 
         if action == "tick":
             try:
-                result = await store.tick()
+                tick_result = await store.tick()
             except ValueError as exc:
                 return CommandResult(message=str(exc))
-            if result is None:
+            if tick_result is None:
                 return CommandResult(message="Autopilot tick completed with no execution.")
             return CommandResult(
                 message=(
-                    f"Autopilot tick executed {result.card_id} -> {result.status}\n"
-                    f"run report: {result.run_report_path}\n"
-                    f"verification report: {result.verification_report_path}"
+                    f"Autopilot tick executed {tick_result.card_id} -> {tick_result.status}\n"
+                    f"run report: {tick_result.run_report_path}\n"
+                    f"verification report: {tick_result.verification_report_path}"
                 )
             )
 

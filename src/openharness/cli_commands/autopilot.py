@@ -5,11 +5,47 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from openharness.cli_app import autopilot_app
 from openharness.cli_utils import _safe_short
+
+if TYPE_CHECKING:
+    from openharness.autopilot import RepoTaskCard, RepoTaskSource, RepoTaskStatus
+
+#: Accepted ``--status`` spellings, mapped onto the store's status taxonomy.
+_STATUS_NAMES: dict[str, RepoTaskStatus] = {
+    "queued": "queued",
+    "accepted": "accepted",
+    "preparing": "preparing",
+    "running": "running",
+    "verifying": "verifying",
+    "pr_open": "pr_open",
+    "waiting_ci": "waiting_ci",
+    "repairing": "repairing",
+    "completed": "completed",
+    "merged": "merged",
+    "failed": "failed",
+    "rejected": "rejected",
+    "superseded": "superseded",
+}
+
+#: Accepted ``SOURCE`` spellings, mapped onto the store's source taxonomy.
+_SOURCE_NAMES: dict[str, RepoTaskSource] = {
+    "idea": "manual_idea",
+    "manual": "manual_idea",
+    "manual_idea": "manual_idea",
+    "ohmo": "ohmo_request",
+    "ohmo_request": "ohmo_request",
+    "issue": "github_issue",
+    "github_issue": "github_issue",
+    "pr": "github_pr",
+    "github_pr": "github_pr",
+    "claude": "claude_code_candidate",
+    "claude_code_candidate": "claude_code_candidate",
+}
 
 
 @autopilot_app.command("status")
@@ -22,21 +58,7 @@ def autopilot_status_cmd(
     store = RepoAutopilotStore(cwd)
     counts = store.stats()
     print("Autopilot queue status:")
-    for status_name in (
-        "queued",
-        "accepted",
-        "preparing",
-        "running",
-        "verifying",
-        "pr_open",
-        "waiting_ci",
-        "repairing",
-        "completed",
-        "merged",
-        "failed",
-        "rejected",
-        "superseded",
-    ):
+    for status_name in _STATUS_NAMES:
         print(f"  {status_name}: {counts.get(status_name, 0)}")
     next_card = store.pick_next_card()
     if next_card is not None:
@@ -54,7 +76,15 @@ def autopilot_list_cmd(
     from openharness.autopilot import RepoAutopilotStore
 
     store = RepoAutopilotStore(cwd)
-    cards = store.list_cards(status=status) if status else store.list_cards()
+    cards: list[RepoTaskCard]
+    if status:
+        status_filter = _STATUS_NAMES.get(status)
+        if status_filter is None:
+            print("No autopilot cards.")
+            return
+        cards = store.list_cards(status=status_filter)
+    else:
+        cards = store.list_cards()
     if not cards:
         print("No autopilot cards.")
         return
@@ -74,20 +104,7 @@ def autopilot_add_cmd(
     """Add one repo autopilot card."""
     from openharness.autopilot import RepoAutopilotStore
 
-    source_map = {
-        "idea": "manual_idea",
-        "manual": "manual_idea",
-        "manual_idea": "manual_idea",
-        "ohmo": "ohmo_request",
-        "ohmo_request": "ohmo_request",
-        "issue": "github_issue",
-        "github_issue": "github_issue",
-        "pr": "github_pr",
-        "github_pr": "github_pr",
-        "claude": "claude_code_candidate",
-        "claude_code_candidate": "claude_code_candidate",
-    }
-    source_kind = source_map.get(source.lower())
+    source_kind = _SOURCE_NAMES.get(source.lower())
     if source_kind is None:
         print(f"Unknown source kind: {source}", file=sys.stderr)
         raise typer.Exit(1)

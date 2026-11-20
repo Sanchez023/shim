@@ -8,7 +8,11 @@ from typing import Any
 
 import typer
 
-from openharness.version import __version__  # noqa: F401 - re-exported by cli.py
+from openharness.version import __version__
+
+# ``cli`` and ``cli_commands.main`` re-export the version from this module, so
+# declare the re-export explicitly for type checkers.
+__all__ = ["__version__"]
 
 _RESUME_OPTIONS = frozenset({"--resume", "-r"})
 

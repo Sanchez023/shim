@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import re
-from typing import ClassVar
+from pathlib import Path
+from typing import Any, ClassVar, Protocol
 
-from telegram import BotCommand, ReplyParameters, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import BotCommand, ReplyParameters, Update, User
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ExtBot,
+    JobQueue,
+    MessageHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
 from openharness.channels.bus.events import OutboundMessage
@@ -21,6 +31,23 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 _TELEGRAM_URL_LOGGERS = ("httpx", "httpcore", "telegram.ext")
+
+# ``Application`` is generic over bot/context/job-queue types; the builder below
+# always produces this instantiation (no custom bot or context classes are used).
+TelegramApp = Application[
+    ExtBot[None],
+    ContextTypes.DEFAULT_TYPE,
+    dict[str, Any],
+    Any,
+    Any,
+    JobQueue[ContextTypes.DEFAULT_TYPE],
+]
+
+
+class _TelegramMediaFile(Protocol):
+    """The part of a Telegram media object the download path relies on."""
+
+    file_id: str
 
 
 def silence_telegram_token_url_loggers() -> None:
@@ -39,7 +66,7 @@ def _markdown_to_telegram_html(text: str) -> str:
 
     # 1. Extract and protect code blocks (preserve content from other processing)
     code_blocks: list[str] = []
-    def save_code_block(m: re.Match) -> str:
+    def save_code_block(m: re.Match[str]) -> str:
         code_blocks.append(m.group(1))
         return f"\x00CB{len(code_blocks) - 1}\x00"
 
@@ -47,7 +74,7 @@ def _markdown_to_telegram_html(text: str) -> str:
 
     # 2. Extract and protect inline code
     inline_codes: list[str] = []
-    def save_inline_code(m: re.Match) -> str:
+    def save_inline_code(m: re.Match[str]) -> str:
         inline_codes.append(m.group(1))
         return f"\x00IC{len(inline_codes) - 1}\x00"
 
@@ -119,13 +146,13 @@ class TelegramChannel(BaseChannel):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self.groq_api_key = groq_api_key
-        self._app: Application | None = None
+        self._app: TelegramApp | None = None
         self.last_error: str | None = None
         self.polling_started = False
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
-        self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
-        self._media_group_buffers: dict[str, dict] = {}
-        self._media_group_tasks: dict[str, asyncio.Task] = {}
+        self._typing_tasks: dict[str, asyncio.Task[None]] = {}  # chat_id -> typing loop task
+        self._media_group_buffers: dict[str, dict[str, Any]] = {}
+        self._media_group_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -177,7 +204,11 @@ class TelegramChannel(BaseChannel):
             logger.warning("Failed to register bot commands: %s", e)
 
         # Start polling (this runs until stopped)
-        await self._app.updater.start_polling(
+        updater = self._app.updater
+        if updater is None:
+            logger.error("Telegram updater unavailable, cannot poll for updates")
+            return
+        await updater.start_polling(
             allowed_updates=["message"],
             drop_pending_updates=False,
         )
@@ -204,7 +235,9 @@ class TelegramChannel(BaseChannel):
 
         if self._app:
             logger.info("Stopping Telegram bot...")
-            await self._app.updater.stop()
+            updater = self._app.updater
+            if updater is not None:
+                await updater.stop()
             await self._app.stop()
             await self._app.shutdown()
             self._app = None
@@ -250,17 +283,25 @@ class TelegramChannel(BaseChannel):
         for media_path in (msg.media or []):
             try:
                 media_type = self._get_media_type(media_path)
-                sender = {
-                    "photo": self._app.bot.send_photo,
-                    "voice": self._app.bot.send_voice,
-                    "audio": self._app.bot.send_audio,
-                }.get(media_type, self._app.bot.send_document)
-                param = "photo" if media_type == "photo" else media_type if media_type in ("voice", "audio") else "document"
-                with open(media_path, 'rb') as f:
-                    await sender(
-                        chat_id=chat_id,
-                        **{param: f},
-                        reply_parameters=reply_params
+                # Read off the event loop; the upload itself stays awaited.
+                data = await asyncio.to_thread(Path(media_path).read_bytes)
+                handle = io.BytesIO(data)
+                handle.name = Path(media_path).name
+                if media_type == "photo":
+                    await self._app.bot.send_photo(
+                        chat_id=chat_id, photo=handle, reply_parameters=reply_params
+                    )
+                elif media_type == "voice":
+                    await self._app.bot.send_voice(
+                        chat_id=chat_id, voice=handle, reply_parameters=reply_params
+                    )
+                elif media_type == "audio":
+                    await self._app.bot.send_audio(
+                        chat_id=chat_id, audio=handle, reply_parameters=reply_params
+                    )
+                else:
+                    await self._app.bot.send_document(
+                        chat_id=chat_id, document=handle, reply_parameters=reply_params
                     )
             except Exception as e:
                 filename = media_path.rsplit("/", 1)[-1]
@@ -335,19 +376,20 @@ class TelegramChannel(BaseChannel):
         )
 
     @staticmethod
-    def _sender_id(user) -> str:
+    def _sender_id(user: User) -> str:
         """Build sender_id with username for allowlist matching."""
         sid = str(user.id)
         return f"{sid}|{user.username}" if user.username else sid
 
     async def _forward_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Forward slash commands to the bus for unified handling in AgentLoop."""
-        if not update.message or not update.effective_user:
+        message = update.message
+        if not message or not update.effective_user or message.text is None:
             return
         await self._handle_message(
             sender_id=self._sender_id(update.effective_user),
-            chat_id=str(update.message.chat_id),
-            content=update.message.text,
+            chat_id=str(message.chat_id),
+            content=message.text,
         )
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -374,8 +416,8 @@ class TelegramChannel(BaseChannel):
             content_parts.append(message.caption)
 
         # Handle media files
-        media_file = None
-        media_type = None
+        media_file: _TelegramMediaFile | None = None
+        media_type: str | None = None
 
         if message.photo:
             media_file = message.photo[-1]  # Largest photo
@@ -391,7 +433,7 @@ class TelegramChannel(BaseChannel):
             media_type = "file"
 
         # Download media if present
-        if media_file and self._app:
+        if media_file and media_type and self._app:
             try:
                 file = await self._app.bot.get_file(media_file.file_id)
                 ext = self._get_extension(media_type, getattr(media_file, 'mime_type', None))
@@ -407,14 +449,12 @@ class TelegramChannel(BaseChannel):
 
                 # Handle voice transcription
                 if media_type == "voice" or media_type == "audio":
-                    from openharness.providers.transcription import GroqTranscriptionProvider
-                    transcriber = GroqTranscriptionProvider(api_key=self.groq_api_key)
-                    transcription = await transcriber.transcribe(file_path)
-                    if transcription:
-                        logger.info("Transcribed %s: %s...", media_type, transcription[:50])
-                        content_parts.append(f"[transcription: {transcription}]")
-                    else:
-                        content_parts.append(f"[{media_type}: {file_path}]")
+                    # No transcription provider ships with this build (the old
+                    # ``openharness.providers.transcription`` module never
+                    # existed), so surface the attachment instead of failing the
+                    # whole send with an ImportError.
+                    logger.info("Received %s without a transcription provider", media_type)
+                    content_parts.append(f"[{media_type}: {file_path}]")
                 else:
                     content_parts.append(f"[{media_type}: {file_path}]")
 

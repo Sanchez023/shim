@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 
-def _extract_share_card_content(content_json: dict, msg_type: str) -> str:
+def _extract_share_card_content(content_json: dict[str, Any], msg_type: str) -> str:
     """Extract text representation from share cards and interactive messages."""
     parts = []
 
@@ -26,7 +27,7 @@ def _extract_share_card_content(content_json: dict, msg_type: str) -> str:
     return "\n".join(parts) if parts else f"[{msg_type}]"
 
 
-def _extract_interactive_content(content: dict) -> list[str]:
+def _extract_interactive_content(content: dict[str, Any]) -> list[str]:
     """Recursively extract text and links from interactive card content."""
     parts = []
 
@@ -67,7 +68,7 @@ def _extract_interactive_content(content: dict) -> list[str]:
     return parts
 
 
-def _extract_element_content(element: dict) -> list[str]:
+def _extract_element_content(element: dict[str, Any]) -> list[str]:
     """Extract content from a single card element."""
     parts = []
 
@@ -140,7 +141,7 @@ def _extract_element_content(element: dict) -> list[str]:
     return parts
 
 
-def _extract_post_content(content_json: dict) -> tuple[str, list[str]]:
+def _extract_post_content(content_json: dict[str, Any]) -> tuple[str, list[str]]:
     """Extract text and image keys from Feishu post (rich text) message.
 
     Handles three payload shapes:
@@ -149,7 +150,7 @@ def _extract_post_content(content_json: dict) -> tuple[str, list[str]]:
     - Wrapped:   {"post": {"zh_cn": {"title": "...", "content": [...]}}}
     """
 
-    def _parse_block(block: dict) -> tuple[str | None, list[str]]:
+    def _parse_block(block: dict[str, Any]) -> tuple[str | None, list[str]]:
         if not isinstance(block, dict) or not isinstance(block.get("content"), list):
             return None, []
         texts, images = [], []
@@ -198,7 +199,7 @@ def _extract_post_content(content_json: dict) -> tuple[str, list[str]]:
     return "", []
 
 
-def _extract_post_text(content_json: dict) -> str:
+def _extract_post_text(content_json: dict[str, Any]) -> str:
     """Extract plain text from Feishu post (rich text) message content.
 
     Legacy wrapper for _extract_post_content, returns only text.
@@ -220,7 +221,7 @@ class FeishuRenderMixin:
     _CODE_BLOCK_RE = re.compile(r"(```[\s\S]*?```)", re.MULTILINE)
 
     @staticmethod
-    def _parse_md_table(table_text: str) -> dict | None:
+    def _parse_md_table(table_text: str) -> dict[str, Any] | None:
         """Parse a markdown table into a Feishu table element."""
         lines = [_line.strip() for _line in table_text.strip().split("\n") if _line.strip()]
         if len(lines) < 3:
@@ -238,7 +239,7 @@ class FeishuRenderMixin:
             "rows": [{f"c{i}": r[i] if i < len(r) else "" for i in range(len(headers))} for r in rows],
         }
 
-    def _build_card_elements(self, content: str) -> list[dict]:
+    def _build_card_elements(self, content: str) -> list[dict[str, Any]]:
         """Split content into div/markdown + table elements for Feishu card."""
         elements, last_end = [], 0
         for m in self._TABLE_RE.finditer(content):
@@ -253,7 +254,9 @@ class FeishuRenderMixin:
         return elements or [{"tag": "markdown", "content": content}]
 
     @staticmethod
-    def _split_elements_by_table_limit(elements: list[dict], max_tables: int = 1) -> list[list[dict]]:
+    def _split_elements_by_table_limit(
+        elements: list[dict[str, Any]], max_tables: int = 1
+    ) -> list[list[dict[str, Any]]]:
         """Split card elements into groups with at most *max_tables* table elements each.
 
         Feishu cards have a hard limit of one table per card (API error 11310).
@@ -262,8 +265,8 @@ class FeishuRenderMixin:
         """
         if not elements:
             return [[]]
-        groups: list[list[dict]] = []
-        current: list[dict] = []
+        groups: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
         table_count = 0
         for el in elements:
             if el.get("tag") == "table":
@@ -280,7 +283,7 @@ class FeishuRenderMixin:
             groups.append(current)
         return groups or [[]]
 
-    def _split_headings(self, content: str) -> list[dict]:
+    def _split_headings(self, content: str) -> list[dict[str, Any]]:
         """Split content by headings, converting headings to div elements."""
         protected = content
         code_blocks = []
@@ -288,7 +291,7 @@ class FeishuRenderMixin:
             code_blocks.append(m.group(1))
             protected = protected.replace(m.group(1), f"\x00CODE{len(code_blocks)-1}\x00", 1)
 
-        elements = []
+        elements: list[dict[str, Any]] = []
         last_end = 0
         for m in self._HEADING_RE.finditer(protected):
             before = protected[last_end:m.start()].strip()
@@ -393,10 +396,10 @@ class FeishuRenderMixin:
         Each line becomes a paragraph (row) in the post body.
         """
         lines = content.strip().split("\n")
-        paragraphs: list[list[dict]] = []
+        paragraphs: list[list[dict[str, Any]]] = []
 
         for line in lines:
-            elements: list[dict] = []
+            elements: list[dict[str, Any]] = []
             last_end = 0
 
             for m in cls._MD_LINK_RE.finditer(line):

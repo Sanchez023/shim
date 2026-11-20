@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 import websockets
@@ -14,11 +14,22 @@ from openharness.channels.impl.base import BaseChannel, resolve_channel_media_di
 from openharness.config.schema import DiscordConfig
 from openharness.utils.helpers import split_message
 
+if TYPE_CHECKING:
+    from websockets.asyncio.client import ClientConnection
+
 logger = logging.getLogger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
 MAX_MESSAGE_LEN = 2000  # Discord message character limit
+
+
+class _DiscordAdapterConfig(Protocol):
+    """Fields the ``ohmo`` setup wizard stores in the config extras, not the schema."""
+
+    gateway_url: str
+    intents: int
+    group_policy: str
 
 
 class DiscordChannel(BaseChannel):
@@ -29,12 +40,17 @@ class DiscordChannel(BaseChannel):
     def __init__(self, config: DiscordConfig, bus: MessageBus):
         super().__init__(config, bus)
         self.config: DiscordConfig = config
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._ws: ClientConnection | None = None
         self._seq: int | None = None
-        self._heartbeat_task: asyncio.Task | None = None
-        self._typing_tasks: dict[str, asyncio.Task] = {}
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._typing_tasks: dict[str, asyncio.Task[None]] = {}
         self._http: httpx.AsyncClient | None = None
         self._bot_user_id: str | None = None
+
+    @property
+    def _adapter_config(self) -> _DiscordAdapterConfig:
+        """The config seen through the adapter-specific (extra) field names."""
+        return cast(_DiscordAdapterConfig, self.config)
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -48,7 +64,7 @@ class DiscordChannel(BaseChannel):
         while self._running:
             try:
                 logger.info("Connecting to Discord gateway...")
-                async with websockets.connect(self.config.gateway_url) as ws:
+                async with websockets.connect(self._adapter_config.gateway_url) as ws:
                     self._ws = ws
                     await self._gateway_loop()
             except asyncio.CancelledError:
@@ -106,9 +122,13 @@ class DiscordChannel(BaseChannel):
         self, url: str, headers: dict[str, str], payload: dict[str, Any]
     ) -> bool:
         """Send a single Discord API payload with retry on rate-limit. Returns True on success."""
+        http = self._http
+        if http is None:
+            logger.warning("Discord HTTP client not initialized")
+            return False
         for attempt in range(3):
             try:
-                response = await self._http.post(url, headers=headers, json=payload)
+                response = await http.post(url, headers=headers, json=payload)
                 if response.status_code == 429:
                     data = response.json()
                     retry_after = float(data.get("retry_after", 1.0))
@@ -175,7 +195,7 @@ class DiscordChannel(BaseChannel):
             "op": 2,
             "d": {
                 "token": self.config.token,
-                "intents": self.config.intents,
+                "intents": self._adapter_config.intents,
                 "properties": {
                     "os": "nanobot",
                     "browser": "nanobot",
@@ -220,9 +240,8 @@ class DiscordChannel(BaseChannel):
             return
 
         # Check group channel policy (DMs always respond if is_allowed passes)
-        if guild_id is not None:
-            if not self._should_respond_in_group(payload, content):
-                return
+        if guild_id is not None and not self._should_respond_in_group(payload, content):
+            return
 
         content_parts = [content] if content else []
         media_paths: list[str] = []
@@ -266,10 +285,11 @@ class DiscordChannel(BaseChannel):
 
     def _should_respond_in_group(self, payload: dict[str, Any], content: str) -> bool:
         """Check if bot should respond in a group channel based on policy."""
-        if self.config.group_policy == "open":
+        group_policy = self._adapter_config.group_policy
+        if group_policy == "open":
             return True
 
-        if self.config.group_policy == "mention":
+        if group_policy == "mention":
             # Check if bot was mentioned in the message
             if self._bot_user_id:
                 # Check mentions array
@@ -293,8 +313,11 @@ class DiscordChannel(BaseChannel):
             url = f"{DISCORD_API_BASE}/channels/{channel_id}/typing"
             headers = {"Authorization": f"Bot {self.config.token}"}
             while self._running:
+                http = self._http
+                if http is None:
+                    return
                 try:
-                    await self._http.post(url, headers=headers)
+                    await http.post(url, headers=headers)
                 except asyncio.CancelledError:
                     return
                 except Exception as e:

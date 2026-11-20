@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from openharness.channels.impl.base import resolve_channel_media_dir
 from openharness.channels.impl.feishu_base import FeishuBaseMixin
@@ -40,7 +40,7 @@ class FeishuMediaMixin(FeishuBaseMixin):
                     ).build()
                 response = self._client.im.v1.image.create(request)
                 if response.success():
-                    image_key = response.data.image_key
+                    image_key: str = response.data.image_key
                     logger.debug("Uploaded image %s: %s", os.path.basename(file_path), image_key)
                     return image_key
                 else:
@@ -68,7 +68,7 @@ class FeishuMediaMixin(FeishuBaseMixin):
                     ).build()
                 response = self._client.im.v1.file.create(request)
                 if response.success():
-                    file_key = response.data.file_key
+                    file_key: str = response.data.file_key
                     logger.debug("Uploaded file %s: %s", file_name, file_key)
                     return file_key
                 else:
@@ -136,8 +136,8 @@ class FeishuMediaMixin(FeishuBaseMixin):
     async def _download_and_save_media(
         self,
         msg_type: str,
-        content_json: dict,
-        message_id: str | None = None
+        content_json: dict[str, Any],
+        message_id: str | None = None,
     ) -> tuple[str | None, str]:
         """
         Download media from Feishu and save to local disk.

@@ -33,13 +33,15 @@ try:
 except ImportError:
     DINGTALK_AVAILABLE = False
     # Fallback so class definitions don't crash at module level
-    CallbackHandler = object  # type: ignore[assignment,misc]
-    CallbackMessage = None  # type: ignore[assignment,misc]
-    AckMessage = None  # type: ignore[assignment,misc]
-    ChatbotMessage = None  # type: ignore[assignment,misc]
+    CallbackHandler = object
+    CallbackMessage = None
+    AckMessage = None
+    ChatbotMessage = None
 
 
-class NanobotDingTalkHandler(CallbackHandler):
+# dingtalk-stream ships no type information (see the mypy override), so the SDK
+# base class is ``Any``; subclassing it is the only way to register the handler.
+class NanobotDingTalkHandler(CallbackHandler):  # type: ignore[misc]  # untyped SDK
     """
     Standard DingTalk Stream SDK Callback Handler.
     Parses incoming messages and forwards them to the Nanobot channel.
@@ -49,7 +51,7 @@ class NanobotDingTalkHandler(CallbackHandler):
         super().__init__()
         self.channel = channel
 
-    async def process(self, message: CallbackMessage):
+    async def process(self, message: CallbackMessage) -> tuple[int, str]:
         """Process incoming stream message."""
         try:
             # Parse using SDK's ChatbotMessage for robust handling
@@ -123,7 +125,7 @@ class DingTalkChannel(BaseChannel):
         self._token_expiry: float = 0
 
         # Hold references to background tasks to prevent GC
-        self._background_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         """Start the DingTalk bot with Stream Mode."""
@@ -164,8 +166,8 @@ class DingTalkChannel(BaseChannel):
                     logger.info("Reconnecting DingTalk stream in 5 seconds...")
                     await asyncio.sleep(5)
 
-        except Exception as e:
-            logger.exception("Failed to start DingTalk channel: %s", e)
+        except Exception:
+            logger.exception("Failed to start DingTalk channel")
 
     async def stop(self) -> None:
         """Stop the DingTalk bot."""

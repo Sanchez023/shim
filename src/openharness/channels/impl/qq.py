@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -30,18 +30,20 @@ def _make_bot_class(channel: "QQChannel") -> "type[botpy.Client]":
     """Create a botpy Client subclass bound to the given channel."""
     intents = botpy.Intents(public_messages=True, direct_message=True)
 
-    class _Bot(botpy.Client):
-        def __init__(self):
+    # botpy ships no type information (see the mypy override), so the SDK base
+    # class is ``Any``; subclassing it is the only way to register the handlers.
+    class _Bot(botpy.Client):  # type: ignore[misc]  # untyped botpy SDK
+        def __init__(self) -> None:
             # Disable botpy's file log — not using loguru; default "botpy.log" fails on read-only fs
             super().__init__(intents=intents, ext_handlers=False)
 
-        async def on_ready(self):
+        async def on_ready(self) -> None:
             logger.info("QQ bot ready: %s", self.robot.name)
 
-        async def on_c2c_message_create(self, message: "C2CMessage"):
+        async def on_c2c_message_create(self, message: "C2CMessage") -> None:
             await channel._on_message(message)
 
-        async def on_direct_message_create(self, message):
+        async def on_direct_message_create(self, message: Any) -> None:
             await channel._on_message(message)
 
     return _Bot
@@ -56,7 +58,7 @@ class QQChannel(BaseChannel):
         super().__init__(config, bus)
         self.config: QQConfig = config
         self._client: botpy.Client | None = None
-        self._processed_ids: deque = deque(maxlen=1000)
+        self._processed_ids: deque[str] = deque(maxlen=1000)
         self._msg_seq: int = 1  # 消息序列号，避免被 QQ API 去重
         # Last inbound message id per chat, used for passive replies (QQ only
         # allows passive C2C messages to be replied to within a short window).
@@ -85,8 +87,11 @@ class QQChannel(BaseChannel):
     async def _run_bot(self, secret: str) -> None:
         """Run the bot connection with auto-reconnect."""
         while self._running:
+            client = self._client
+            if client is None:  # not yet constructed; nothing to run
+                return
             try:
-                await self._client.start(appid=self.config.app_id, secret=secret)
+                await client.start(appid=self.config.app_id, secret=secret)
             except Exception as e:
                 logger.warning("QQ bot error: %s", e)
             if self._running:

@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict
+from collections.abc import AsyncIterator
+from typing import Protocol, cast
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -11,6 +13,21 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import WhatsAppConfig
 
 logger = logging.getLogger(__name__)
+
+
+class _BridgeSocket(Protocol):
+    """The slice of the websockets client connection the bridge loop uses."""
+
+    def __aiter__(self) -> AsyncIterator[str | bytes]: ...
+    async def send(self, message: str | bytes) -> None: ...
+    async def close(self) -> None: ...
+
+
+class _WhatsAppBridgeConfig(Protocol):
+    """Bridge settings the ``ohmo`` setup wizard writes into the config extras."""
+
+    bridge_url: str
+    bridge_token: str
 
 
 class WhatsAppChannel(BaseChannel):
@@ -26,7 +43,7 @@ class WhatsAppChannel(BaseChannel):
     def __init__(self, config: WhatsAppConfig, bus: MessageBus):
         super().__init__(config, bus)
         self.config: WhatsAppConfig = config
-        self._ws = None
+        self._ws: _BridgeSocket | None = None
         self._connected = False
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
 
@@ -34,7 +51,8 @@ class WhatsAppChannel(BaseChannel):
         """Start the WhatsApp channel by connecting to the bridge."""
         import websockets
 
-        bridge_url = self.config.bridge_url
+        bridge_config = cast(_WhatsAppBridgeConfig, self.config)
+        bridge_url = bridge_config.bridge_url
 
         logger.info("Connecting to WhatsApp bridge at %s...", bridge_url)
 
@@ -45,8 +63,10 @@ class WhatsAppChannel(BaseChannel):
                 async with websockets.connect(bridge_url) as ws:
                     self._ws = ws
                     # Send auth token if configured
-                    if self.config.bridge_token:
-                        await ws.send(json.dumps({"type": "auth", "token": self.config.bridge_token}))
+                    if bridge_config.bridge_token:
+                        await ws.send(
+                            json.dumps({"type": "auth", "token": bridge_config.bridge_token})
+                        )
                     self._connected = True
                     logger.info("Connected to WhatsApp bridge")
 
@@ -93,7 +113,7 @@ class WhatsAppChannel(BaseChannel):
         except Exception as e:
             logger.error("Error sending WhatsApp message: %s", e)
 
-    async def _handle_bridge_message(self, raw: str) -> None:
+    async def _handle_bridge_message(self, raw: str | bytes) -> None:
         """Handle a message from the bridge."""
         try:
             data = json.loads(raw)

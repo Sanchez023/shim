@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from collections import OrderedDict
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -29,6 +29,9 @@ from openharness.channels.impl.feishu_render import (
 from openharness.channels.impl.feishu_transport import FeishuTransportMixin
 from openharness.config.schema import FeishuConfig
 
+if TYPE_CHECKING:
+    from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+
 logger = logging.getLogger(__name__)
 
 FEISHU_AVAILABLE = importlib.util.find_spec("lark_oapi") is not None
@@ -39,6 +42,13 @@ MSG_TYPE_MAP = {
     "file": "[file]",
     "sticker": "[sticker]",
 }
+
+
+class _FeishuAdapterConfig(Protocol):
+    """Fields the ``ohmo`` setup wizard stores in the config extras, not the schema."""
+
+    react_emoji: str
+
 
 class FeishuChannel(
     FeishuRenderMixin,
@@ -89,6 +99,11 @@ class FeishuChannel(
             .build()
         return True
 
+    @property
+    def _adapter_config(self) -> _FeishuAdapterConfig:
+        """The config seen through the adapter-specific (extra) field names."""
+        return cast(_FeishuAdapterConfig, self.config)
+
     async def start(self) -> None:
         """Start the Feishu bot with WebSocket long connection."""
         if not FEISHU_AVAILABLE:
@@ -128,7 +143,7 @@ class FeishuChannel(
         # module-level `loop = asyncio.get_event_loop()` picks up an idle loop
         # instead of the already-running main asyncio loop, which would cause
         # "This event loop is already running" errors.
-        def run_ws():
+        def run_ws() -> None:
             import time
 
             import lark_oapi.ws.client as _lark_ws_client
@@ -347,7 +362,7 @@ class FeishuChannel(
             self._sender_cache.popitem(last=False)
         return display_name
 
-    def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:  # noqa: F821, UP037
+    def _on_message_sync(self, data: P2ImMessageReceiveV1) -> None:
         """
         Sync handler for incoming messages (called from WebSocket thread).
         Schedules async handling in the main event loop.
@@ -355,7 +370,7 @@ class FeishuChannel(
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._on_message(data), self._loop)
 
-    async def _on_message(self, data: "P2ImMessageReceiveV1") -> None:  # noqa: F821, UP037
+    async def _on_message(self, data: P2ImMessageReceiveV1) -> None:
         """Handle incoming message from Feishu."""
         try:
             event = data.event
@@ -457,7 +472,7 @@ class FeishuChannel(
                 return
 
             # Add reaction only after policy says this message will be handled.
-            await self._add_reaction(message_id, self.config.react_emoji)
+            await self._add_reaction(message_id, self._adapter_config.react_emoji)
 
             # Forward to message bus
             reply_to = chat_id if chat_type == "group" else sender_id

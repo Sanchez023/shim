@@ -42,7 +42,9 @@ def save_cron_jobs(jobs: list[dict[str, Any]]) -> None:
 
 def validate_cron_expression(expression: str) -> bool:
     """Return True if the expression is a valid cron schedule."""
-    return croniter.is_valid(expression)
+    # ``croniter`` ships no stubs, so pin the Any return to the declared type.
+    valid: bool = croniter.is_valid(expression)
+    return valid
 
 
 def validate_timezone(tz: str | None) -> bool:
@@ -65,9 +67,11 @@ def next_run_time(expression: str, base: datetime | None = None, tz: str | None 
     base = base or datetime.now(UTC)
     if tz:
         local_base = base.astimezone(ZoneInfo(tz))
-        local_next = croniter(expression, local_base).get_next(datetime)
+        # ``croniter`` is untyped; ``get_next`` is a ``datetime`` here.
+        local_next: datetime = croniter(expression, local_base).get_next(datetime)
         return local_next.astimezone(UTC)
-    return croniter(expression, base).get_next(datetime)
+    upcoming: datetime = croniter(expression, base).get_next(datetime)
+    return upcoming
 
 
 def upsert_cron_job(job: dict[str, Any]) -> None:

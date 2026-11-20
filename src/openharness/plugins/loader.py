@@ -10,7 +10,7 @@ import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -30,6 +30,12 @@ from openharness.plugins.schemas import PluginManifest
 from openharness.plugins.types import LoadedPlugin, PluginCommandDefinition
 from openharness.skills.loader import _parse_skill_metadata
 from openharness.skills.types import SkillDefinition
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from openharness.config.settings_schema import Settings
+    from openharness.hooks.schemas import HookDefinition
+    from openharness.mcp.types import McpServerConfig
+    from openharness.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +86,7 @@ def discover_plugin_paths(cwd: str | Path, extra_roots: Iterable[str | Path] | N
 
 
 def discover_plugin_paths_for_settings(
-    settings,
+    settings: Settings,
     cwd: str | Path,
     extra_roots: Iterable[str | Path] | None = None,
 ) -> list[Path]:
@@ -105,7 +111,11 @@ def discover_plugin_paths_for_settings(
     return paths
 
 
-def load_plugins(settings, cwd: str | Path, extra_roots: Iterable[str | Path] | None = None) -> list[LoadedPlugin]:
+def load_plugins(
+    settings: Settings,
+    cwd: str | Path,
+    extra_roots: Iterable[str | Path] | None = None,
+) -> list[LoadedPlugin]:
     """Load plugins from disk."""
     project_plugins_dir = get_project_plugins_dir(cwd)
     if not getattr(settings, "allow_project_plugins", False) and any(
@@ -223,7 +233,7 @@ def _transform_command_files(files: list[Path]) -> list[Path]:
     for file_path in files:
         files_by_dir.setdefault(file_path.parent, []).append(file_path)
     result: list[Path] = []
-    for dir_path, dir_files in files_by_dir.items():
+    for dir_files in files_by_dir.values():
         skill_files = [path for path in dir_files if path.name.lower() == "skill.md"]
         if skill_files:
             result.append(skill_files[0])
@@ -619,7 +629,7 @@ def _load_single_agent_file(
     )
 
 
-def _load_plugin_hooks(path: Path) -> dict[str, list]:
+def _load_plugin_hooks(path: Path) -> dict[str, list[HookDefinition | dict[str, Any]]]:
     """Load hooks from a flat hooks.json file."""
     if not path.exists():
         return {}
@@ -631,7 +641,7 @@ def _load_plugin_hooks(path: Path) -> dict[str, list]:
     )
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    parsed: dict[str, list] = {}
+    parsed: dict[str, list[HookDefinition | dict[str, Any]]] = {}
     for event, hooks in raw.items():
         parsed[event] = []
         for hook in hooks:
@@ -647,7 +657,10 @@ def _load_plugin_hooks(path: Path) -> dict[str, list]:
     return parsed
 
 
-def _load_plugin_hooks_structured(path: Path, plugin_root: Path) -> dict[str, list]:
+def _load_plugin_hooks_structured(
+    path: Path,
+    plugin_root: Path,
+) -> dict[str, list[HookDefinition | dict[str, Any]]]:
     """Load hooks from structured hooks.json format."""
     if not path.exists():
         return {}
@@ -658,7 +671,7 @@ def _load_plugin_hooks_structured(path: Path, plugin_root: Path) -> dict[str, li
     hooks_data = raw.get("hooks", raw)
     if not isinstance(hooks_data, dict):
         return {}
-    parsed: dict[str, list] = {}
+    parsed: dict[str, list[HookDefinition | dict[str, Any]]] = {}
     for event, entries in hooks_data.items():
         if not isinstance(entries, list):
             continue
@@ -678,7 +691,7 @@ def _load_plugin_hooks_structured(path: Path, plugin_root: Path) -> dict[str, li
     return parsed
 
 
-def _load_plugin_mcp(path: Path) -> dict[str, object]:
+def _load_plugin_mcp(path: Path) -> dict[str, McpServerConfig]:
     """Load MCP server configuration from a JSON file."""
     if not path.exists():
         return {}
@@ -689,15 +702,17 @@ def _load_plugin_mcp(path: Path) -> dict[str, object]:
     return parsed.mcpServers
 
 
-def _load_plugin_tools(path: Path, manifest: PluginManifest) -> list:
+def _load_plugin_tools(path: Path, manifest: PluginManifest) -> list[BaseTool[Any]]:
     """Discover and instantiate BaseTool subclasses from a plugin's tools/ directory."""
-    from openharness.tools.base import BaseTool
+    # Imported as a module so the generic ``BaseTool`` needs no type arguments
+    # at the runtime import site; the annotation uses the TYPE_CHECKING alias.
+    from openharness.tools import base as tools_base
 
     tools_dir = path / manifest.tools_dir
     if not tools_dir.is_dir():
         return []
 
-    tools: list[BaseTool] = []
+    tools: list[BaseTool[Any]] = []
     for py_file in sorted(tools_dir.glob("*.py")):
         if py_file.name.startswith("_"):
             continue
@@ -717,8 +732,8 @@ def _load_plugin_tools(path: Path, manifest: PluginManifest) -> list:
             attr = getattr(module, attr_name, None)
             if (
                 isinstance(attr, type)
-                and issubclass(attr, BaseTool)
-                and attr is not BaseTool
+                and issubclass(attr, tools_base.BaseTool)
+                and attr is not tools_base.BaseTool
                 and hasattr(attr, "name")
                 and hasattr(attr, "description")
             ):

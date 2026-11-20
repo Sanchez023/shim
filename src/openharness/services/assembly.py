@@ -24,7 +24,8 @@ from openharness.api.provider import (
     supports_implicit_prompt_cache,
 )
 from openharness.bridge import get_bridge_manager
-from openharness.config import get_config_file_path, load_settings, save_settings
+from openharness.config import Settings, get_config_file_path, load_settings, save_settings
+from openharness.config.provider_types import ResolvedAuth
 from openharness.domain.messages import (
     ConversationMessage,
     sanitize_conversation_messages,
@@ -33,13 +34,20 @@ from openharness.domain.stream_events import StreamEvent
 from openharness.engine import QueryEngine
 from openharness.engine.cache_warmup import get_default_cache_warmup
 from openharness.engine.session_manager import SessionManager
-from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
+from openharness.hooks import (
+    HookEvent,
+    HookExecutionContext,
+    HookExecutor,
+    HookRegistry,
+    load_hook_registry,
+)
 from openharness.hooks.hot_reload import HookReloader
 from openharness.keybindings import load_keybindings
 from openharness.mcp.client import McpClientManager
 from openharness.mcp.config import load_mcp_server_configs
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.plugins import load_plugins
+from openharness.plugins.types import LoadedPlugin
 from openharness.prompts import (
     build_stable_system_prompt_result,
     build_turn_context,
@@ -79,7 +87,7 @@ StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
 
 
-def _resolve_image_generation_config(settings) -> dict[str, str]:
+def _resolve_image_generation_config(settings: Settings) -> dict[str, str]:
     """Resolve image generation configuration from settings, environment, and Codex auth."""
     from openharness.config.settings import ImageGenerationConfig, ProviderProfile
 
@@ -127,7 +135,7 @@ def _codex_permission_mode(mode: str) -> str:
     }.get(mode, "approve-for-me")
 
 
-def _resolve_vision_config(settings) -> dict[str, str]:
+def _resolve_vision_config(settings: Settings) -> dict[str, str]:
     """Resolve the vision model configuration from settings or environment.
 
     Priority: settings.vision fields > environment variables > empty.
@@ -184,7 +192,7 @@ class RuntimeBundle:
         """Return the active agent backend, defaulting to the local engine."""
         return self.agent_backend or LocalPythonBackend(self.engine)
 
-    def current_settings(self):
+    def current_settings(self) -> Settings:
         """Return the effective settings for this session.
 
         We persist most settings to disk (``~/.openharness/settings.json``), but
@@ -195,17 +203,23 @@ class RuntimeBundle:
         """
         return load_settings().merge_cli_overrides(**self.settings_overrides)
 
-    def current_plugins(self):
+    def current_plugins(self) -> list[LoadedPlugin]:
         """Return currently visible plugins for the working tree."""
-        return load_plugins(
+        # ``load_plugins`` is re-exported through a bare module ``__getattr__``
+        # (so it types as Any); pin the real return type at the boundary.
+        plugins: list[LoadedPlugin] = load_plugins(
             self.current_settings(),
             self.cwd,
             extra_roots=self.extra_plugin_roots,
         )
+        return plugins
 
     def hook_summary(self) -> str:
         """Return the current hook summary."""
-        return load_hook_registry(self.current_settings(), self.current_plugins()).summary()
+        # ``load_hook_registry`` is re-exported through a bare module
+        # ``__getattr__`` (so it types as Any); pin the real registry type.
+        registry: HookRegistry = load_hook_registry(self.current_settings(), self.current_plugins())
+        return registry.summary()
 
     def plugin_summary(self) -> str:
         """Return the current plugin summary."""
@@ -234,12 +248,12 @@ class RuntimeBundle:
         return "\n".join(lines)
 
 
-def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
+def _resolve_api_client_from_settings(settings: Settings) -> SupportsStreamingMessages:
     """Build the appropriate API client for the resolved settings."""
     # Ensure profile fields (base_url, model, api_format) are projected to settings
     settings = settings.materialize_active_profile()
 
-    def _safe_resolve_auth():
+    def _safe_resolve_auth() -> ResolvedAuth:
         try:
             return settings.resolve_auth()
         except Exception as exc:  # noqa: BLE001 - auth failures become a clean SystemExit
@@ -282,7 +296,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     )
 
 
-def _print_auth_resolution_error(settings, exc: Exception) -> None:
+def _print_auth_resolution_error(settings: Settings, exc: Exception) -> None:
     """Render auth failures without collapsing subscription errors into API-key advice."""
     try:
         profile_name, profile = settings.resolve_profile()
@@ -333,7 +347,7 @@ async def build_runtime(
     permission_prompt: PermissionPrompt | None = None,
     ask_user_prompt: AskUserPrompt | None = None,
     edit_approval_prompt: EditApprovalPrompt | None = None,
-    restore_messages: list[dict] | None = None,
+    restore_messages: list[dict[str, Any]] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
     enforce_max_turns: bool = True,
     session_backend: SessionBackend | None = None,
@@ -491,7 +505,7 @@ async def build_runtime(
     if not restore_messages:
         await session_manager.restore_from_event_log()
 
-    def _current_settings():
+    def _current_settings() -> Settings:
         return load_settings().merge_cli_overrides(**settings_overrides)
 
     def _build_turn_context(

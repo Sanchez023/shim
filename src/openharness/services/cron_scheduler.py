@@ -178,7 +178,7 @@ def _windows_pid_exists(pid: int) -> bool:
         return _pid_exists_with_kill_zero(pid)
 
     try:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     except AttributeError:
         return _pid_exists_with_kill_zero(pid)
 
@@ -194,7 +194,8 @@ def _windows_pid_exists(pid: int) -> bool:
     if not handle:
         return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED: process exists
     try:
-        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        wait_result: int = kernel32.WaitForSingleObject(handle, 0)
+        return wait_result == wait_timeout
     finally:
         kernel32.CloseHandle(handle)
 
@@ -211,6 +212,15 @@ def _pid_exists_with_kill_zero(pid: int) -> bool:
     return True
 
 
+# ``SIGKILL`` is POSIX-only, so the Windows typeshed hides it. ``_kill_pid``
+# escalates with ``SIGTERM`` on Windows and only reads this constant on POSIX;
+# the ``sys.platform`` guard is what tells mypy which constant exists.
+if sys.platform == "win32":  # pragma: no cover - never read on Windows
+    _SIGKILL: int = signal.SIGTERM
+else:
+    _SIGKILL = signal.SIGKILL
+
+
 def _terminate_pid(pid: int) -> None:
     os.kill(pid, signal.SIGTERM)
 
@@ -219,7 +229,7 @@ def _kill_pid(pid: int) -> None:
     if get_platform() == "windows":
         os.kill(pid, signal.SIGTERM)
         return
-    os.kill(pid, signal.SIGKILL)
+    os.kill(pid, _SIGKILL)
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +309,7 @@ def _command_for_job(job: dict[str, Any]) -> str:
     shell_family = resolve_shell_family()
     payload = job.get("payload")
     if not isinstance(payload, dict):
-        raise ValueError("cron job has no command or agent_turn payload")
+        raise TypeError("cron job has no command or agent_turn payload")
     kind = str(payload.get("kind", "agent_turn"))
     message = str(payload.get("message") or "").strip()
     if not message:

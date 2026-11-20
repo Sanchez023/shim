@@ -81,9 +81,9 @@ def _windows_bash_candidates() -> list[str]:
         base = os.environ.get(parts[0])
         if not base:
             continue
-        candidate = Path(base).joinpath(*parts[1:])
-        if candidate.exists():
-            candidates.append(str(candidate))
+        install_path = Path(base).joinpath(*parts[1:])
+        if install_path.exists():
+            candidates.append(str(install_path))
     msys = Path(os.environ.get("SystemDrive", "C:") + "/msys64/usr/bin/bash.exe")
     if msys.exists():
         candidates.append(str(msys))

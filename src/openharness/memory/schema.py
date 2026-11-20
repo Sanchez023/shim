@@ -10,9 +10,18 @@ import string
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from typing import SupportsIndex, SupportsInt
+
+    #: Argument types ``int()`` accepts in its single-argument form. Frontmatter
+    #: values arrive as ``object``; the coercion helpers below cast to this union
+    #: so ``int()`` stays the authority and still raises for everything else.
+    IntConvertible = str | bytes | bytearray | SupportsInt | SupportsIndex
+
 
 SCHEMA_VERSION = 1
 
@@ -114,7 +123,7 @@ def parse_memory_type(raw: Any, *, default: MemoryType | None = None) -> MemoryT
     if isinstance(raw, str):
         value = raw.strip().lower()
         if value in MEMORY_TYPES:
-            return value  # type: ignore[return-value]
+            return value
         if value in {"note", "memory", "core", "knowledge"}:
             return default
     return default
@@ -126,7 +135,7 @@ def parse_memory_scope(raw: Any, *, default: MemoryScope | None = None) -> Memor
     if isinstance(raw, str):
         value = raw.strip().lower()
         if value in MEMORY_SCOPES:
-            return value  # type: ignore[return-value]
+            return value
         if value in {"personal", "user"}:
             return "private"
         if value in {"shared"}:
@@ -296,7 +305,7 @@ def coerce_int(value: object, *, default: int = 0) -> int:
     """Coerce a metadata value to int."""
 
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(cast("IntConvertible", value))
     except (TypeError, ValueError):
         return default
 
@@ -438,6 +447,6 @@ def _as_optional_int(value: object) -> int | None:
     if isinstance(value, str) and not value.strip():
         return None
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(cast("IntConvertible", value))
     except (TypeError, ValueError):
         return None

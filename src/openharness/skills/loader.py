@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from openharness.config.paths import get_config_dir
-from openharness.config.settings import load_settings
+from openharness.config.settings import Settings, load_settings
 from openharness.skills._frontmatter import (
     optional_frontmatter_str,
     parse_bool_frontmatter,
@@ -44,7 +45,7 @@ def load_skill_registry(
     *,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
-    settings=None,
+    settings: Settings | None = None,
 ) -> SkillRegistry:
     """Load bundled, user-defined, project, and plugin skills."""
     registry = SkillRegistry()
@@ -211,7 +212,7 @@ def _parse_skill_markdown(default_name: str, content: str) -> tuple[str, str]:
     return parse_skill_frontmatter(default_name, content, fallback_template="Skill: {name}")
 
 
-def _parse_skill_metadata(default_name: str, content: str) -> dict:
+def _parse_skill_metadata(default_name: str, content: str) -> dict[str, Any]:
     parsed = parse_skill_metadata(default_name, content, fallback_template="Skill: {name}")
     frontmatter = parsed.get("frontmatter")
     if not isinstance(frontmatter, dict):

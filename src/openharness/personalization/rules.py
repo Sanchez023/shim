@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 _RULES_DIR = Path("~/.openharness/local_rules").expanduser()
 _RULES_FILE = _RULES_DIR / "rules.md"
@@ -29,14 +30,15 @@ def save_local_rules(content: str) -> Path:
     return _RULES_FILE
 
 
-def load_facts() -> dict:
+def load_facts() -> dict[str, Any]:
     """Load extracted facts as a dict."""
     if _FACTS_FILE.exists():
-        return json.loads(_FACTS_FILE.read_text(encoding="utf-8"))
+        payload: dict[str, Any] = json.loads(_FACTS_FILE.read_text(encoding="utf-8"))
+        return payload
     return {"facts": [], "last_updated": None}
 
 
-def save_facts(facts: dict) -> None:
+def save_facts(facts: dict[str, Any]) -> None:
     """Persist extracted facts."""
     _ensure_dir()
     facts["last_updated"] = datetime.now(UTC).isoformat()
@@ -46,9 +48,12 @@ def save_facts(facts: dict) -> None:
     )
 
 
-def merge_facts(existing: dict, new_facts: list[dict]) -> dict:
+def merge_facts(
+    existing: dict[str, Any],
+    new_facts: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Merge new facts into existing, deduplicating by key."""
-    by_key = {}
+    by_key: dict[str, dict[str, Any]] = {}
     for f in existing.get("facts", []):
         by_key[f["key"]] = f
     for f in new_facts:

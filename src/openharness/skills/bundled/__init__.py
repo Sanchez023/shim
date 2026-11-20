@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from openharness.skills._frontmatter import (
     optional_frontmatter_str,
@@ -57,7 +58,7 @@ def _parse_frontmatter(default_name: str, content: str) -> tuple[str, str]:
     )
 
 
-def _parse_metadata(default_name: str, content: str) -> dict:
+def _parse_metadata(default_name: str, content: str) -> dict[str, Any]:
     parsed = parse_skill_metadata(default_name, content, fallback_template="Bundled skill: {name}")
     frontmatter = parsed.get("frontmatter")
     if not isinstance(frontmatter, dict):

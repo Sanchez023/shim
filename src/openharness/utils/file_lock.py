@@ -11,8 +11,24 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from openharness.platforms import PlatformName, get_platform
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from typing import Protocol
+
+    class _FcntlApi(Protocol):
+        """The slice of the POSIX ``fcntl`` module this helper relies on.
+
+        ``fcntl`` is POSIX-only, so on a non-POSIX analysis platform the import
+        resolves to a module object without any of these members.
+        """
+
+        LOCK_EX: int
+        LOCK_UN: int
+
+        def flock(self, fd: int, operation: int, /) -> None: ...
 
 
 class SwarmLockError(RuntimeError):
@@ -53,12 +69,13 @@ def _exclusive_posix_lock(lock_path: Path) -> Iterator[None]:
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.touch(exist_ok=True)
+    posix_fcntl = cast("_FcntlApi", fcntl)
     with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        posix_fcntl.flock(lock_file.fileno(), posix_fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            posix_fcntl.flock(lock_file.fileno(), posix_fcntl.LOCK_UN)
 
 
 @contextmanager

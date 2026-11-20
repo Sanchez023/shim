@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from openharness.api.client import (
@@ -223,7 +225,7 @@ def test_anthropic_assistant_message_preserves_thinking_blocks():
             self.__dict__.update(kwargs)
 
     class _Message:
-        content = [
+        content: ClassVar[list[_Block]] = [
             _Block(type="thinking", thinking="reasoning", signature="sig"),
             _Block(type="redacted_thinking", data="opaque"),
             _Block(type="text", text="answer"),
@@ -267,7 +269,7 @@ def test_anthropic_client_refreshes_claude_token_on_request(monkeypatch):
                 usage = _Usage()
                 stop_reason = "end_turn"
                 role = "assistant"
-                content = []
+                content: ClassVar[list[object]] = []
 
             return _Message()
 

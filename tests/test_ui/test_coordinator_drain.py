@@ -4,6 +4,8 @@ into the interactive UI hosts (React backend host and headless print mode).
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from openharness.ui import coordinator_drain
@@ -41,7 +43,7 @@ async def test_drain_returns_immediately_when_no_pending_entries():
     """No pending entries = no follow-up turn, no `Waiting for...` message."""
 
     class _FakeEngine:
-        tool_metadata: dict[str, object] = {}
+        tool_metadata: ClassVar[dict[str, object]] = {}
 
     class _FakeBundle:
         engine = _FakeEngine()

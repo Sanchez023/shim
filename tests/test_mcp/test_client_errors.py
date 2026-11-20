@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 try:
-    BaseExceptionGroup
-except NameError:  # pragma: no cover - Python < 3.11 compatibility
+    from builtins import BaseExceptionGroup  # Python 3.11+
+except ImportError:  # pragma: no cover - Python < 3.11 compatibility
     from exceptiongroup import BaseExceptionGroup
 
 from openharness.mcp.client import McpClientManager, McpServerNotConnectedError
@@ -260,7 +260,6 @@ def test_mcp_adapter_exposes_read_only_annotation():
 @pytest.mark.asyncio
 async def test_call_tool_times_out_instead_of_hanging(monkeypatch):
     """ADR-0012 D3: a silent MCP server must not wedge the turn."""
-    import openharness.mcp.client as mcp_client
 
     manager = McpClientManager({})
     hung = AsyncMock()

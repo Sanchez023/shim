@@ -30,6 +30,41 @@ from openharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 
 
+def _init_git_repo(path: Path) -> None:
+    """Create a git repository with a committer identity at *path*.
+
+    ``subprocess`` blocks, so the git plumbing the ``async`` tests need lives in
+    a plain synchronous helper instead of inside the coroutine.
+    """
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "openharness@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "OpenHarness Tests"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _commit_all(path: Path, message: str) -> None:
+    """Stage every change in *path* and record one commit."""
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_file_write_read_and_edit(tmp_path: Path):
     context = ToolExecutionContext(cwd=tmp_path)
@@ -433,30 +468,9 @@ async def test_lsp_tool(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_worktree_tools(tmp_path: Path):
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
-    subprocess.run(
-        ["git", "config", "user.email", "openharness@example.com"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "OpenHarness Tests"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _init_git_repo(tmp_path)
     (tmp_path / "demo.txt").write_text("hello\n", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True, text=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _commit_all(tmp_path, "init")
 
     enter_result = await EnterWorktreeTool().execute(
         EnterWorktreeToolInput(branch="feature/demo"),

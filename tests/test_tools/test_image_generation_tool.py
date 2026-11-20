@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
@@ -20,7 +20,7 @@ class _FakeStreamResponse:
         self._lines = lines or []
         self._body = body.encode("utf-8")
 
-    async def __aenter__(self) -> _FakeStreamResponse:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -39,7 +39,7 @@ class _FakeAsyncClient:
         self._response = response
         self._sink = sink
 
-    async def __aenter__(self) -> _FakeAsyncClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -111,7 +111,11 @@ async def test_execute_codex_hosted_generation(monkeypatch: pytest.MonkeyPatch, 
     sink: dict[str, Any] = {}
     response = _FakeStreamResponse(
         lines=[
-            'data: {"type":"response.output_item.done","item":{"id":"ig_1","type":"image_generation_call","status":"completed","revised_prompt":"blue icon","result":"%s"}}' % image_b64,
+            (
+                'data: {"type":"response.output_item.done","item":'
+                f'{{"id":"ig_1","type":"image_generation_call","status":"completed",'
+                f'"revised_prompt":"blue icon","result":"{image_b64}"}}}}'
+            ),
             "",
             'data: {"type":"response.completed","response":{"status":"completed"}}',
             "",

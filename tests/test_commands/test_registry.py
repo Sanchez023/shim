@@ -78,6 +78,29 @@ def _make_context(tmp_path: Path) -> CommandContext:
     )
 
 
+def _init_git_repo(path: Path) -> None:
+    """Create a git repository with a committer identity at *path*.
+
+    ``subprocess`` blocks, so the git plumbing the ``async`` test needs lives in
+    a plain synchronous helper instead of inside the coroutine.
+    """
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "openharness@example.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "OpenHarness Tests"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -1687,21 +1710,7 @@ async def test_mcp_and_voice_commands_report_richer_state(tmp_path: Path, monkey
 @pytest.mark.asyncio
 async def test_git_commands_report_repository_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
-    subprocess.run(
-        ["git", "config", "user.email", "openharness@example.com"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "OpenHarness Tests"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _init_git_repo(tmp_path)
     (tmp_path / "demo.txt").write_text("hello\n", encoding="utf-8")
 
     registry = create_default_command_registry()

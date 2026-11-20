@@ -43,9 +43,11 @@ def test_exclusive_file_lock_routes_windows_branch(monkeypatch, tmp_path: Path):
 
 
 def test_exclusive_file_lock_rejects_unknown_platform(tmp_path: Path):
-    with pytest.raises(lockfile.SwarmLockUnavailableError, match="not supported"):
-        with lockfile.exclusive_file_lock(tmp_path / "unknown.lock", platform_name="unknown"):
-            pass
+    with (
+        pytest.raises(lockfile.SwarmLockUnavailableError, match="not supported"),
+        lockfile.exclusive_file_lock(tmp_path / "unknown.lock", platform_name="unknown"),
+    ):
+        pass
 
 
 def test_posix_lock_reports_unavailable_when_fcntl_missing(monkeypatch, tmp_path: Path):
@@ -58,9 +60,11 @@ def test_posix_lock_reports_unavailable_when_fcntl_missing(monkeypatch, tmp_path
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    with pytest.raises(lockfile.SwarmLockUnavailableError, match="fcntl not available"):
-        with file_lock._exclusive_posix_lock(tmp_path / "posix.lock"):
-            pass
+    with (
+        pytest.raises(lockfile.SwarmLockUnavailableError, match="fcntl not available"),
+        file_lock._exclusive_posix_lock(tmp_path / "posix.lock"),
+    ):
+        pass
 
 
 def test_windows_lock_reports_unavailable_when_msvcrt_missing(monkeypatch, tmp_path: Path):
@@ -73,9 +77,11 @@ def test_windows_lock_reports_unavailable_when_msvcrt_missing(monkeypatch, tmp_p
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    with pytest.raises(lockfile.SwarmLockUnavailableError, match="msvcrt not available"):
-        with file_lock._exclusive_windows_lock(tmp_path / "windows.lock"):
-            pass
+    with (
+        pytest.raises(lockfile.SwarmLockUnavailableError, match="msvcrt not available"),
+        file_lock._exclusive_windows_lock(tmp_path / "windows.lock"),
+    ):
+        pass
 
 
 def test_swarm_lockfile_shim_re_exports_public_api():

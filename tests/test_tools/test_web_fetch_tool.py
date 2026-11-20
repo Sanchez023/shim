@@ -46,9 +46,9 @@ async def test_web_search_tool_reads_results(tmp_path, monkeypatch):
         body = (
             "<html><body>"
             '<a class="result__a" href="https://example.com/docs">OpenHarness Docs</a>'
-            '<div class="result__snippet">Search query was %s and docs were found.</div>'
+            f'<div class="result__snippet">Search query was {query} and docs were found.</div>'
             "</body></html>"
-        ) % query
+        )
         return httpx.Response(
             200,
             headers={"Content-Type": "text/html; charset=utf-8"},

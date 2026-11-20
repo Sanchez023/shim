@@ -20,6 +20,7 @@ from openharness.mcp.types import (
     McpConnectionStatus,
     McpHttpServerConfig,
     McpResourceInfo,
+    McpServerConfig,
     McpStdioServerConfig,
     McpToolInfo,
 )
@@ -70,7 +71,7 @@ MCP_CALL_TIMEOUT_SECONDS = 300.0
 class McpClientManager:
     """Manage MCP connections and expose tools/resources."""
 
-    def __init__(self, server_configs: dict[str, object]) -> None:
+    def __init__(self, server_configs: dict[str, McpServerConfig]) -> None:
         self._server_configs = server_configs
         # A tool call that never returns must not wedge the turn; MCP servers
         # are third-party processes and can hang (ADR-0012 D3).
@@ -114,11 +115,11 @@ class McpClientManager:
         }
         await self.connect_all()
 
-    def update_server_config(self, name: str, config: object) -> None:
+    def update_server_config(self, name: str, config: McpServerConfig) -> None:
         """Replace one server config in memory."""
         self._server_configs[name] = config
 
-    def get_server_config(self, name: str) -> object | None:
+    def get_server_config(self, name: str) -> McpServerConfig | None:
         """Return one configured server object if present."""
         return self._server_configs.get(name)
 

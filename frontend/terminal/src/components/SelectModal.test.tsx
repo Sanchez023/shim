@@ -3,6 +3,7 @@ import test from 'node:test';
 import {PassThrough} from 'node:stream';
 import React from 'react';
 import {render} from 'ink';
+import stringWidth from 'string-width';
 
 import {SelectModal} from './SelectModal.js';
 
@@ -18,10 +19,10 @@ type InkTestStdout = PassThrough & {
 	moveCursor: () => boolean;
 };
 
-function createTestStdout(): InkTestStdout {
+function createTestStdout(columns = 120): InkTestStdout {
 	return Object.assign(new PassThrough(), {
 		isTTY: true,
-		columns: 120,
+		columns,
 		rows: 40,
 		cursorTo: () => true,
 		clearLine: () => true,
@@ -46,8 +47,8 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 	throw new Error(`Ink output did not stabilize: ${JSON.stringify(previous)}`);
 }
 
-async function renderToText(element: React.JSX.Element): Promise<string> {
-	const stdout = createTestStdout();
+async function renderToText(element: React.JSX.Element, columns = 120): Promise<string> {
+	const stdout = createTestStdout(columns);
 	let output = '';
 	stdout.on('data', (chunk) => {
 		output += chunk.toString();
@@ -108,4 +109,33 @@ test('an empty match set renders the no-matches state', async () => {
 
 	assert.match(rendered, /no matches/);
 	assert.match(rendered, /0\/7 matches/);
+});
+
+test('clamps long labels so a picker row never wraps', async () => {
+	const long = '11/20 14:30  75msg  把你的错别字改成正确的写法，并且顺手把那段说明也润色一下';
+	const rendered = await renderToText(
+		<SelectModal
+			title="Resume Session (1)"
+			options={[
+				{
+					value: 'abc',
+					label: long,
+					description: 'deepreasoning-ds-v4.1flash',
+					active: true,
+				},
+			]}
+			selectedIndex={0}
+			searchable
+			query=""
+			totalCount={1}
+		/>,
+		60,
+	);
+
+	assert.match(rendered, /…/);
+	// The clamp keeps the whole row (label + "(current)" + model) on one line.
+	assert.match(rendered, /….*\(current\).*deepreasoning/);
+	for (const line of rendered.split('\n')) {
+		assert.ok(stringWidth(line) <= 60, `line overflows 60 columns: ${line.length}`);
+	}
 });

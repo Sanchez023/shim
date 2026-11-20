@@ -361,93 +361,95 @@ class CodexApiClient:
         completed_response: dict[str, Any] | None = None
 
         headers = _build_codex_headers(self._auth_token)
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            async with client.stream("POST", self._url, headers=headers, json=body) as response:
-                if response.status_code >= 400:
-                    payload = await response.aread()
-                    message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
-                    raise httpx.HTTPStatusError(message, request=response.request, response=response)
+        async with (
+            httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
+            client.stream("POST", self._url, headers=headers, json=body) as response,
+        ):
+            if response.status_code >= 400:
+                payload = await response.aread()
+                message = _format_error_message(response.status_code, payload.decode("utf-8", "replace"))
+                raise httpx.HTTPStatusError(message, request=response.request, response=response)
 
-                async for event in self._iter_sse_events(response):
-                    event_type = event.get("type")
-                    if event_type == "response.output_text.delta":
-                        delta = event.get("delta")
-                        if isinstance(delta, str) and delta:
-                            current_text_parts.append(delta)
-                            yield ApiTextDeltaEvent(text=delta)
-                    elif event_type in {
-                        "response.reasoning_summary_text.delta",
-                        "response.reasoning_text.delta",
-                    }:
-                        delta = event.get("delta")
-                        if isinstance(delta, str) and delta:
-                            yield ApiThinkingDeltaEvent(text=delta)
-                    elif event_type == "response.output_item.done":
-                        item = event.get("item")
-                        if not isinstance(item, dict):
-                            continue
-                        item_type = item.get("type")
-                        if item_type == "message":
-                            text = ""
-                            raw_content = item.get("content")
-                            if isinstance(raw_content, list):
-                                parts = []
-                                for block in raw_content:
-                                    if isinstance(block, dict):
-                                        if block.get("type") == "output_text":
-                                            parts.append(str(block.get("text", "")))
-                                        elif block.get("type") == "refusal":
-                                            parts.append(str(block.get("refusal", "")))
-                                text = "".join(parts)
-                            if text:
-                                content.append(TextBlock(text=text))
-                        elif item_type == "function_call":
-                            arguments = item.get("arguments")
-                            parsed_arguments: dict[str, Any]
-                            if isinstance(arguments, str) and arguments:
-                                try:
-                                    loaded = json.loads(arguments)
-                                except json.JSONDecodeError:
-                                    loaded = {}
-                            else:
+            async for event in self._iter_sse_events(response):
+                event_type = event.get("type")
+                if event_type == "response.output_text.delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, str) and delta:
+                        current_text_parts.append(delta)
+                        yield ApiTextDeltaEvent(text=delta)
+                elif event_type in {
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning_text.delta",
+                }:
+                    delta = event.get("delta")
+                    if isinstance(delta, str) and delta:
+                        yield ApiThinkingDeltaEvent(text=delta)
+                elif event_type == "response.output_item.done":
+                    item = event.get("item")
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type")
+                    if item_type == "message":
+                        text = ""
+                        raw_content = item.get("content")
+                        if isinstance(raw_content, list):
+                            parts = []
+                            for block in raw_content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "output_text":
+                                        parts.append(str(block.get("text", "")))
+                                    elif block.get("type") == "refusal":
+                                        parts.append(str(block.get("refusal", "")))
+                            text = "".join(parts)
+                        if text:
+                            content.append(TextBlock(text=text))
+                    elif item_type == "function_call":
+                        arguments = item.get("arguments")
+                        parsed_arguments: dict[str, Any]
+                        if isinstance(arguments, str) and arguments:
+                            try:
+                                loaded = json.loads(arguments)
+                            except json.JSONDecodeError:
                                 loaded = {}
-                            parsed_arguments = loaded if isinstance(loaded, dict) else {}
-                            call_id = item.get("call_id")
-                            name = item.get("name")
-                            if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
-                                provider_item_id = item.get("id")
-                                content.append(
-                                    ToolUseBlock(
-                                        id=call_id,
-                                        name=name,
-                                        input=parsed_arguments,
-                                        provider_item_id=(
-                                            provider_item_id
-                                            if isinstance(provider_item_id, str)
-                                            else ""
-                                        ),
-                                    )
-                                )
-                        elif item_type == "reasoning":
-                            content.append(_reasoning_block_from_item(item))
-                    elif event_type == "response.completed":
-                        response_payload = event.get("response")
-                        if isinstance(response_payload, dict):
-                            completed_response = response_payload
-                    elif event_type == "response.failed":
-                        response_payload = event.get("response")
-                        if isinstance(response_payload, dict):
-                            raise classify_message(
-                                _format_codex_stream_error(
-                                    response_payload,
-                                    fallback="Codex response failed",
+                        else:
+                            loaded = {}
+                        parsed_arguments = loaded if isinstance(loaded, dict) else {}
+                        call_id = item.get("call_id")
+                        name = item.get("name")
+                        if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
+                            provider_item_id = item.get("id")
+                            content.append(
+                                ToolUseBlock(
+                                    id=call_id,
+                                    name=name,
+                                    input=parsed_arguments,
+                                    provider_item_id=(
+                                        provider_item_id
+                                        if isinstance(provider_item_id, str)
+                                        else ""
+                                    ),
                                 )
                             )
-                        raise classify_message("Codex response failed")
-                    elif event_type == "error":
+                    elif item_type == "reasoning":
+                        content.append(_reasoning_block_from_item(item))
+                elif event_type == "response.completed":
+                    response_payload = event.get("response")
+                    if isinstance(response_payload, dict):
+                        completed_response = response_payload
+                elif event_type == "response.failed":
+                    response_payload = event.get("response")
+                    if isinstance(response_payload, dict):
                         raise classify_message(
-                            _format_codex_stream_error(event, fallback="Codex error")
+                            _format_codex_stream_error(
+                                response_payload,
+                                fallback="Codex response failed",
+                            )
                         )
+                    raise classify_message("Codex response failed")
+                elif event_type == "error":
+                    raise classify_message(
+                        _format_codex_stream_error(event, fallback="Codex error")
+                    )
 
         if current_text_parts and not any(isinstance(block, TextBlock) for block in content):
             content.insert(0, TextBlock(text="".join(current_text_parts)))

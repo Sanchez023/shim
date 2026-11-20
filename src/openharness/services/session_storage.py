@@ -10,9 +10,86 @@ from typing import Any
 from uuid import uuid4
 
 from openharness.config.paths import get_sessions_dir
-from openharness.domain.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.domain.messages import (
+    ConversationMessage,
+    TextBlock,
+    ToolResultBlock,
+    sanitize_conversation_messages,
+)
 from openharness.domain.usage import UsageSnapshot
 from openharness.utils.fs import atomic_write_text
+
+#: Session summaries are shown as one-line picker labels, so they must never
+#: contain the harness-injected per-turn context block or raw newlines.
+SUMMARY_MAX_CHARS = 80
+_HARNESS_CONTEXT_PREFIXES = ("<turn_context>",)
+
+
+def _one_line(text: str, limit: int = SUMMARY_MAX_CHARS) -> str:
+    """Collapse whitespace (including newlines) and clamp to a label size."""
+    return " ".join(text.split())[:limit].strip()
+
+
+def _is_harness_noise(text: str) -> bool:
+    stripped = text.lstrip()
+    return any(stripped.startswith(prefix) for prefix in _HARNESS_CONTEXT_PREFIXES)
+
+
+def summary_from_messages(messages: list[ConversationMessage]) -> str:
+    """Summarize a conversation from its first user-visible user message.
+
+    Harness-injected ``session_private`` blocks (the per-turn context message
+    is one) are never shown to the user, so they must not become the label.
+    """
+    for message in messages:
+        if message.role != "user":
+            continue
+        text = " ".join(
+            block.text
+            for block in message.content
+            if isinstance(block, TextBlock)
+            and block.visibility == "user_visible"
+            and block.text.strip()
+        )
+        summary = _one_line(text)
+        if summary:
+            return summary
+    return ""
+
+
+def _summary_from_message_dicts(messages: Any) -> str:
+    """Same as :func:`summary_from_messages` for raw snapshot dictionaries."""
+    if not isinstance(messages, list):
+        return ""
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        texts = [
+            str(block.get("text") or "")
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and block.get("visibility", "user_visible") == "user_visible"
+            and str(block.get("text") or "").strip()
+        ]
+        summary = _one_line(" ".join(texts))
+        if summary:
+            return summary
+    return ""
+
+
+def _snapshot_summary(data: dict[str, Any]) -> str:
+    """Prefer a freshly derived summary over a stale/harness-generated one."""
+    summary = _summary_from_message_dicts(data.get("messages"))
+    if summary:
+        return summary
+    stored = str(data.get("summary") or "")
+    if _is_harness_noise(stored):
+        return ""
+    return _one_line(stored)
 
 _PERSISTED_TOOL_METADATA_KEYS = (
     "permission_mode",
@@ -27,6 +104,9 @@ _PERSISTED_TOOL_METADATA_KEYS = (
     "compact_checkpoints",
     "compact_last",
     "verification_ledger",
+    # Last provider-reported prompt size. Guarded by its ``message_count`` so a
+    # resumed conversation only uses it while the message list still lines up.
+    "prompt_measurement",
 )
 
 
@@ -93,12 +173,7 @@ def save_session_snapshot(
     sid = session_id or uuid4().hex[:12]
     now = time.time()
     messages = sanitize_conversation_messages(messages)
-    # Extract a summary from the first user message
-    summary = ""
-    for msg in messages:
-        if msg.role == "user" and msg.text.strip():
-            summary = msg.text.strip()[:80]
-            break
+    summary = summary_from_messages(messages)
 
     payload = {
         "session_id": sid,
@@ -136,6 +211,11 @@ def _sanitize_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload = dict(payload)
         payload["messages"] = [message.model_dump(mode="json") for message in messages]
         payload["message_count"] = len(messages)
+        stored = str(payload.get("summary") or "")
+        if not stored or _is_harness_noise(stored):
+            summary = summary_from_messages(messages)
+            if summary:
+                payload["summary"] = summary
     return payload
 
 
@@ -174,11 +254,10 @@ def _prefer_event_log_messages(
     updated["messages"] = [message.model_dump(mode="json") for message in messages]
     updated["message_count"] = len(messages)
     updated["messages_source"] = "event_log"
-    if not updated.get("summary"):
-        for message in messages:
-            if message.role == "user" and message.text.strip():
-                updated["summary"] = message.text.strip()[:80]
-                break
+    if not updated.get("summary") or _is_harness_noise(str(updated.get("summary") or "")):
+        summary = summary_from_messages(messages)
+        if summary:
+            updated["summary"] = summary
     return updated
 
 
@@ -208,15 +287,7 @@ def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, A
             data = json.loads(path.read_text(encoding="utf-8"))
             sid = data.get("session_id", path.stem.replace("session-", ""))
             seen_ids.add(sid)
-            summary = data.get("summary", "")
-            if not summary:
-                # Extract from first user message
-                for msg in data.get("messages", []):
-                    if msg.get("role") == "user":
-                        texts = [b.get("text", "") for b in msg.get("content", []) if b.get("type") == "text"]
-                        summary = " ".join(texts).strip()[:80]
-                        if summary:
-                            break
+            summary = _snapshot_summary(data)
             sessions.append({
                 "session_id": sid,
                 "summary": summary,
@@ -236,14 +307,7 @@ def list_session_snapshots(cwd: str | Path, limit: int = 20) -> list[dict[str, A
             data = json.loads(latest_path.read_text(encoding="utf-8"))
             sid = data.get("session_id", "latest")
             if sid not in seen_ids:
-                summary = data.get("summary", "")
-                if not summary:
-                    for msg in data.get("messages", []):
-                        if msg.get("role") == "user":
-                            texts = [b.get("text", "") for b in msg.get("content", []) if b.get("type") == "text"]
-                            summary = " ".join(texts).strip()[:80]
-                            if summary:
-                                break
+                summary = _snapshot_summary(data)
                 sessions.append({
                     "session_id": sid,
                     "summary": summary or "(latest session)",
@@ -294,10 +358,12 @@ def export_session_markdown(
         text = message.text.strip()
         if text:
             parts.append(text)
-        for block in message.tool_uses:
-            parts.append(f"\n```tool\n{block.name} {json.dumps(block.input, ensure_ascii=True)}\n```")
-        for block in message.content:
-            if getattr(block, "type", "") == "tool_result":
-                parts.append(f"\n```tool-result\n{block.content}\n```")
+        for tool_use in message.tool_uses:
+            parts.append(
+                f"\n```tool\n{tool_use.name} {json.dumps(tool_use.input, ensure_ascii=True)}\n```"
+            )
+        for result_block in message.content:
+            if isinstance(result_block, ToolResultBlock):
+                parts.append(f"\n```tool-result\n{result_block.content}\n```")
     atomic_write_text(path, "\n".join(parts).strip() + "\n")
     return path

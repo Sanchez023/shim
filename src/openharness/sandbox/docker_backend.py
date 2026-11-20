@@ -149,7 +149,7 @@ class DockerSandboxSession:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        _stdout, stderr = await process.communicate()
         if process.returncode != 0:
             msg = stderr.decode("utf-8", errors="replace").strip()
             raise SandboxUnavailableError(f"Failed to start Docker sandbox: {msg}")

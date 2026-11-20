@@ -43,6 +43,7 @@ from openharness.engine.event_emit import emit_event as _emit_event
 from openharness.engine.step_support import _preprocess_images_in_messages
 from openharness.engine.tool_dispatch import dispatch_tool_call as _execute_tool_call
 from openharness.hooks import HookEvent
+from openharness.services.compact.tokens import record_prompt_measurement
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from openharness.engine.query import QueryContext
@@ -141,6 +142,10 @@ class StepRunner:
                     context, "system_prompt_cacheable_prefix", None
                 ),
             )
+
+        # The provider bills this exact list; remember its size so the next
+        # compaction check can anchor on real tokens instead of an estimate.
+        request_message_count = len(messages)
 
         # Tell the cache keepalive a real request is in flight so it never
         # refreshes the same prefix concurrently, and so its idle timer is
@@ -250,6 +255,11 @@ class StepRunner:
             return
 
         messages.append(final_message)
+        record_prompt_measurement(
+            context.tool_metadata,
+            message_count=request_message_count,
+            prompt_tokens=usage.prompt_tokens,
+        )
         await _emit_event(
             context,
             "assistant.message",
@@ -462,23 +472,7 @@ class StepRunner:
             async def _run(tc: ToolUseBlock) -> ToolResultBlock:
                 return await _execute_tool_call(context, tc.name, tc.id, tc.input)
 
-            # Permission-mode switches must apply before the other calls in
-            # the same assistant message are evaluated; running the batch
-            # concurrently let a write race ahead of enter_plan_mode.
-            if any(tc.name in {"enter_plan_mode", "exit_plan_mode"} for tc in tool_calls):
-                raw_results: list[ToolResultBlock | BaseException] = []
-                for tc in tool_calls:
-                    try:
-                        raw_results.append(await _run(tc))
-                    except Exception as exc:  # noqa: BLE001 - converted below
-                        raw_results.append(exc)
-            else:
-                raw_results = await asyncio.gather(
-                    *[_run(tc) for tc in tool_calls], return_exceptions=True
-                )
-            tool_results = []
-            for tc, raw_result in zip(tool_calls, raw_results):
-                converted: ToolResultBlock
+            def _convert(tc: ToolUseBlock, raw_result: object) -> ToolResultBlock:
                 if isinstance(raw_result, asyncio.CancelledError):
                     # A cancelled tool means the turn is being torn down, not that
                     # the tool failed.  Converting it into an is_error result made
@@ -492,7 +486,7 @@ class StepRunner:
                         tc.id,
                         exc_info=raw_result,
                     )
-                    converted = ToolResultBlock(
+                    return ToolResultBlock(
                         tool_use_id=tc.id,
                         content=(
                             f"Tool {tc.name} failed: "
@@ -500,30 +494,94 @@ class StepRunner:
                         ),
                         is_error=True,
                     )
-                else:
-                    converted = raw_result
-                tool_results.append(converted)
+                return cast(ToolResultBlock, raw_result)
 
-            for tc, tool_result in zip(tool_calls, tool_results):
-                await _emit_event(
-                    context,
-                    "tool.result",
-                    {
-                        "tool_name": tc.name,
-                        "tool_use_id": tc.id,
-                        "output": tool_result.content,
-                        "is_error": tool_result.is_error,
-                        "metadata": tool_result.result_metadata,
-                    },
-                    step_id=step_id,
-                )
-                yield ToolExecutionCompleted(
-                    tool_name=tc.name,
-                    output=tool_result.content,
-                    is_error=tool_result.is_error,
-                    metadata=tool_result.result_metadata,
-                    tool_use_id=tc.id,
-                ), None
+            # Permission-mode switches must apply before the other calls in
+            # the same assistant message are evaluated; running the batch
+            # concurrently let a write race ahead of enter_plan_mode.
+            if any(tc.name in {"enter_plan_mode", "exit_plan_mode"} for tc in tool_calls):
+                tool_results = []
+                for tc in tool_calls:
+                    try:
+                        raw: object = await _run(tc)
+                    except Exception as exc:  # noqa: BLE001 - converted below
+                        raw = exc
+                    tool_result = _convert(tc, raw)
+                    tool_results.append(tool_result)
+                    await _emit_event(
+                        context,
+                        "tool.result",
+                        {
+                            "tool_name": tc.name,
+                            "tool_use_id": tc.id,
+                            "output": tool_result.content,
+                            "is_error": tool_result.is_error,
+                            "metadata": tool_result.result_metadata,
+                        },
+                        step_id=step_id,
+                    )
+                    yield ToolExecutionCompleted(
+                        tool_name=tc.name,
+                        output=tool_result.content,
+                        is_error=tool_result.is_error,
+                        metadata=tool_result.result_metadata,
+                        tool_use_id=tc.id,
+                    ), None
+            else:
+                # Report each tool as soon as it finishes instead of waiting for
+                # the slowest one.  `gather` used to hold every completion until
+                # the whole batch was done, so a five-second bash call beside a
+                # five-minute subagent only appeared (and was timed) after the
+                # subagent finished.
+                scheduled = {asyncio.create_task(_run(tc)): tc for tc in tool_calls}
+                order = {tc.id: index for index, tc in enumerate(tool_calls)}
+                pending = set(scheduled)
+                results: dict[str, ToolResultBlock] = {}
+                try:
+                    while pending:
+                        done, pending = await asyncio.wait(
+                            pending, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for task in sorted(
+                            done, key=lambda item: order[scheduled[item].id]
+                        ):
+                            tc = scheduled[task]
+                            try:
+                                raw = task.result()
+                            except asyncio.CancelledError:
+                                for outstanding in pending:
+                                    outstanding.cancel()
+                                raise
+                            except BaseException as exc:  # noqa: BLE001 - converted
+                                raw = exc
+                            tool_result = _convert(tc, raw)
+                            results[tc.id] = tool_result
+                            await _emit_event(
+                                context,
+                                "tool.result",
+                                {
+                                    "tool_name": tc.name,
+                                    "tool_use_id": tc.id,
+                                    "output": tool_result.content,
+                                    "is_error": tool_result.is_error,
+                                    "metadata": tool_result.result_metadata,
+                                },
+                                step_id=step_id,
+                            )
+                            yield ToolExecutionCompleted(
+                                tool_name=tc.name,
+                                output=tool_result.content,
+                                is_error=tool_result.is_error,
+                                metadata=tool_result.result_metadata,
+                                tool_use_id=tc.id,
+                            ), None
+                finally:
+                    # A closed/cancelled turn must not leave tools running.
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                tool_results = [results[tc.id] for tc in tool_calls]
 
         # Keep the next request's new tool tokens inside the cache budget.
         # The full output is preserved as an artifact; only the inline preview

@@ -123,7 +123,7 @@ class TodoWriteToolInput(BaseModel):
     )
 
 
-class TodoWriteTool(BaseTool):
+class TodoWriteTool(BaseTool[TodoWriteToolInput]):
     """Add or update an item in a markdown checklist."""
 
     name = "todo_write"

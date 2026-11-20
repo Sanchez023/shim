@@ -24,6 +24,7 @@ from openharness.commands import (
     CommandResult,
     lookup_skill_slash_command,
 )
+from openharness.commands.registry import CommandRegistry
 from openharness.domain.messages import (
     ConversationMessage,
     ToolResultBlock,
@@ -37,6 +38,7 @@ from openharness.permissions import PermissionChecker
 from openharness.prompts import (
     build_stable_system_prompt_result,
 )
+from openharness.ui.protocol import TranscriptItem
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ EditApprovalPrompt = Callable[[str, str, int, int], Awaitable[str]]
 SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
+ItemRenderer = Callable[[TranscriptItem], Awaitable[None]]
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -97,11 +100,12 @@ def _format_pending_tool_results(messages: list[ConversationMessage]) -> str | N
 
     max_results = 3
     for tr in tool_results[:max_results]:
-        tu = tool_uses_by_id.get(tr.tool_use_id)
-        if tu is not None:
-            raw_input = json.dumps(tu.input, ensure_ascii=True, sort_keys=True)
+        matched = tool_uses_by_id.get(tr.tool_use_id)
+        if matched is not None:
+            raw_input = json.dumps(matched.input, ensure_ascii=True, sort_keys=True)
             lines.append(
-                f"- {tu.name} {_truncate(raw_input, 200)} -> {_truncate(tr.content.strip(), 400)}"
+                f"- {matched.name} {_truncate(raw_input, 200)}"
+                f" -> {_truncate(tr.content.strip(), 400)}"
             )
         else:
             lines.append(
@@ -181,6 +185,7 @@ async def handle_line(
     clear_output: ClearHandler,
     user_message: ConversationMessage | None = None,
     print_user: SystemPrinter | None = None,
+    render_item: ItemRenderer | None = None,
 ) -> bool:
     """Handle one submitted line for either headless or TUI rendering."""
     if not bundle.external_api_client:
@@ -205,8 +210,13 @@ async def handle_line(
         settings_overrides=bundle.settings_overrides,
         print_system=print_system,
     )
+    # ``RuntimeBundle.commands`` is typed as ``object`` on purpose (services do
+    # not import the command layer, ADR-0010); the presentation layer knows the
+    # concrete registry type.
+    registry = bundle.commands if isinstance(bundle.commands, CommandRegistry) else None
     parsed = None if user_message is not None else (
-        bundle.commands.lookup(line) or lookup_skill_slash_command(line, command_context)
+        (registry.lookup(line) if registry is not None else None)
+        or lookup_skill_slash_command(line, command_context)
     )
     if parsed is not None:
         command, args = parsed
@@ -217,7 +227,12 @@ async def handle_line(
         if result.refresh_runtime:
             refresh_runtime_client(bundle)
         await _render_command_result(
-            result, print_system, clear_output, render_event, print_user=print_user
+            result,
+            print_system,
+            clear_output,
+            render_event,
+            print_user=print_user,
+            render_item=render_item,
         )
         if result.submit_prompt is not None:
             original_model = bundle.engine.model
@@ -342,22 +357,39 @@ async def _render_command_result(
     clear_output: ClearHandler,
     render_event: StreamRenderer | None = None,
     print_user: SystemPrinter | None = None,
+    render_item: ItemRenderer | None = None,
 ) -> None:
     if result.clear_screen:
         await clear_output()
     if result.replay_messages and render_event is not None:
         # Replay restored conversation messages as transcript events
+        from openharness.domain.messages import strip_private_blocks
         from openharness.domain.stream_events import AssistantTextDelta, AssistantTurnComplete
         from openharness.domain.usage import UsageSnapshot
 
         await clear_output()
         await print_system("Session restored:")
-        emit_user = print_user or print_system
-        for msg in result.replay_messages:
-            if msg.role == "user" and msg.text.strip():
-                await emit_user(msg.text)
-            elif msg.role == "assistant" and msg.text.strip():
-                await render_event(AssistantTextDelta(text=msg.text))
-                await render_event(AssistantTurnComplete(message=msg, usage=UsageSnapshot()))
+        if render_item is not None:
+            # TUI: replay the same rows a live turn produces (tool calls are
+            # collapsible, harness context is dropped). A flat text replay made
+            # a resumed conversation look nothing like the session it restores.
+            from openharness.ui.transcript_replay import transcript_items_for_messages
+
+            for item in transcript_items_for_messages(result.replay_messages):
+                await render_item(item)
+        else:
+            emit_user = print_user or print_system
+            for msg in result.replay_messages:
+                # Replay only what the user was allowed to see: harness-injected
+                # blocks (the per-turn context message) are session_private and
+                # must not show up as a giant user bubble after /resume.
+                visible = strip_private_blocks(msg)
+                if visible.role == "user" and visible.text.strip():
+                    await emit_user(visible.text)
+                elif visible.role == "assistant" and visible.text.strip():
+                    await render_event(AssistantTextDelta(text=visible.text))
+                    await render_event(
+                        AssistantTurnComplete(message=visible, usage=UsageSnapshot())
+                    )
     if result.message and not result.replay_messages:
         await print_system(result.message)

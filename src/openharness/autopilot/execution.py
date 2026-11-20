@@ -410,7 +410,7 @@ class ExecutionMixin(AutopilotBase):
             ci_state, ci_summary, pr_snapshot, checks = await self._wait_for_pr_ci(linked_pr_number, policies)
             self.update_status(
                 card.id,
-                status="waiting_ci" if ci_state == "pending" else "waiting_ci",
+                status="waiting_ci",
                 note=f"remote CI status: {ci_state}",
                 metadata_updates={
                     "last_ci_conclusion": ci_state,
@@ -675,7 +675,9 @@ class ExecutionMixin(AutopilotBase):
                     if text and not "".join(collected).strip():
                         collected.append(text)
                 elif isinstance(event, ErrorEvent):
-                    raise RuntimeError(event.message)
+                    # Stream dispatch, not a type check: the event carries the
+                    # provider's failure text, so RuntimeError is the right type.
+                    raise RuntimeError(event.message)  # noqa: TRY004
         finally:
             await close_runtime(bundle)
         return "".join(collected).strip()

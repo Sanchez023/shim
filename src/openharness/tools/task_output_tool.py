@@ -32,7 +32,7 @@ class TaskOutputToolInput(BaseModel):
     )
 
 
-class TaskOutputTool(BaseTool):
+class TaskOutputTool(BaseTool[TaskOutputToolInput]):
     """Read the output of a background task."""
 
     name = "task_output"

@@ -27,6 +27,11 @@ import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {buildTerminalTitle, writeTerminalTitle} from './terminalTitle.js';
 import {nextTranscriptOffset} from './transcriptScroll.js';
 import {isBusySafeCommand} from './busyCommands.js';
+import {
+	expandPastePlaceholders,
+	formatPastePlaceholder,
+	shouldCollapsePaste,
+} from './pasteText.js';
 import {nextTodoPanel, parseTodoPanel, type TodoPanelMode} from './todoPanel.js';
 import {filterSelectOptions} from './selectFilter.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
@@ -239,6 +244,13 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		!outputView &&
 		!session.modal &&
 		!selectModal;
+	// The conversation pane is narrower than the terminal when the right rail
+	// is open. Diff backgrounds and wrapping must use this width, not the full
+	// terminal width, or the tint stops short of the pane edge.
+	const conversationWidth = Math.max(
+		20,
+		terminalColumns - 2 - (showSidebar ? sidebarWidth + 1 : 0),
+	);
 	// Ink appends a newline to every frame. A frame as tall as the terminal
 	// therefore scrolls one line on every render, which looks like a full-screen
 	// flash. Leave a few rows of headroom.
@@ -334,6 +346,38 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	}, [printedBoundary, printedCount]);
 	const staticGroups = useMemo(() => groupToolPairs(staticItems), [staticItems]);
 	const clipboardStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+	// Collapsed pastes: the composer shows `[Pasted text #N +M lines]` and the
+	// real text lives here until submit. Keeping the table in App (not in the
+	// composer) means every submit path — normal send, ctrl+x ctrl+s, the busy
+	// queue — expands the same way.
+	const pasteBlocksRef = useRef(new Map<string, string>());
+	const pasteCounterRef = useRef(0);
+	const collapsePaste = (text: string): string | null => {
+		if (!shouldCollapsePaste(text)) {
+			return null;
+		}
+		pasteCounterRef.current += 1;
+		const token = formatPastePlaceholder(pasteCounterRef.current, text);
+		pasteBlocksRef.current.set(token, text);
+		return token;
+	};
+	const expandPastes = (value: string): string =>
+		expandPastePlaceholders(value, pasteBlocksRef.current);
+	// Nothing in the composer can refer to the blocks once it is empty, so drop
+	// them (and restart the numbering) at that point.
+	useEffect(() => {
+		if (input === '') {
+			pasteBlocksRef.current.clear();
+			pasteCounterRef.current = 0;
+		}
+	}, [input]);
+	// History recall and queued-message editing put previously sent text back
+	// into the composer; re-collapse it so a recalled 500-line paste does not
+	// flood the screen again.
+	const setInputFromStored = (text: string): void => {
+		setInput(collapsePaste(text) ?? text);
+	};
 
 	// Commands such as /context return more text than fits on screen. Dumping
 	// that into the conversation puts one giant block into Ink's <Static>
@@ -830,7 +874,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			if (key.return) {
 				const selected = historyMatches[historySearch.index];
 				if (selected !== undefined) {
-					setInput(selected);
+					setInputFromStored(selected);
 				}
 				setHistorySearch(null);
 				return;
@@ -873,7 +917,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		) {
 			const last = queuedMessages[queuedMessages.length - 1];
 			setQueuedMessages(queuedMessages.slice(0, -1));
-			setInput(last.line);
+			setInputFromStored(last.line);
 			setImageAttachments(last.attachments);
 			setHistoryIndex(-1);
 			return;
@@ -1193,14 +1237,18 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			const nextIndex = Math.min(history.length - 1, historyIndex + 1);
 			if (nextIndex >= 0) {
 				setHistoryIndex(nextIndex);
-				setInput(history[history.length - 1 - nextIndex] ?? '');
+				setInputFromStored(history[history.length - 1 - nextIndex] ?? '');
 			}
 			return;
 		}
 		if (!showPicker && key.downArrow) {
 			const nextIndex = Math.max(-1, historyIndex - 1);
 			setHistoryIndex(nextIndex);
-			setInput(nextIndex === -1 ? '' : (history[history.length - 1 - nextIndex] ?? ''));
+			if (nextIndex === -1) {
+				setInput('');
+			} else {
+				setInputFromStored(history[history.length - 1 - nextIndex] ?? '');
+			}
 			return;
 		}
 
@@ -1208,7 +1256,10 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		// PromptInput.  Do NOT duplicate it here — that causes double requests.
 	});
 
-	const onSubmit = (value: string): void => {
+	const onSubmit = (rawValue: string): void => {
+		// Placeholders in the composer stand for collapsed pastes; the model
+		// must receive the real text.
+		const value = expandPastes(rawValue);
 		if (session.modal?.kind === 'question') {
 			session.sendRequest({
 				type: 'question_response',
@@ -1310,12 +1361,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
+		// The composer may hold paste placeholders; send the real text.
+		const draft = expandPastes(input);
 		const pending: QueuedMessage[] = [...queuedMessages];
 		if (currentHasContent) {
-			const shell = input.trim().startsWith('!');
+			const shell = draft.trim().startsWith('!');
 			pending.push({
 				kind: shell ? 'run_shell' : 'submit_line',
-				line: input,
+				line: draft,
 				attachments: shell ? [] : imageAttachments,
 			});
 		}
@@ -1323,8 +1376,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
-		if (input.trim()) {
-			setHistory((items) => [...items, input]);
+		if (draft.trim()) {
+			setHistory((items) => [...items, draft]);
 		}
 		setHistoryIndex(-1);
 		setInput('');
@@ -1382,6 +1435,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 						theme={theme}
 						outputStyle={outputStyle}
 						clamp={false}
+						maxWidth={conversationWidth}
 					/>
 				)}
 			</Static>
@@ -1395,6 +1449,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 						lines={transcriptLines}
 						height={transcriptRows}
 						offset={transcriptScroll}
+						maxWidth={conversationWidth}
 					/>
 				) : outputView ? (
 					<TranscriptView
@@ -1402,6 +1457,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 						lines={outputView.lines}
 						height={transcriptRows}
 						offset={outputScroll}
+						maxWidth={conversationWidth}
 					/>
 				) : (
 					<ConversationView
@@ -1413,6 +1469,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 						appName={appName}
 						version={appVersion}
 						maxRows={transcriptRows}
+						maxWidth={conversationWidth}
 					/>
 				)}
 			</Box>
@@ -1525,6 +1582,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 					queuedMessages={queuedPreviews}
 					readOnly={showTranscript || Boolean(outputView)}
 					todoPanelHidden={todoDisplay === 'hidden'}
+					collapsePaste={collapsePaste}
 				/>
 			)}
 

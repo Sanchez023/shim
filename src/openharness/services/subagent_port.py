@@ -29,5 +29,5 @@ class ServiceCodexSubagentPort:
         return CodexSubagentResult(
             output=result.output,
             stop_reason=result.stop_reason,
-            diagnostic=result.diagnostic,
+            diagnostic=result.diagnostic or "",
         )

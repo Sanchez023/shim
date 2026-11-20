@@ -344,3 +344,24 @@ async def test_a_command_that_finishes_first_never_touches_the_task_manager(
 
     assert "done" in result.output
     assert "backgrounded" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_stream_reader_forwards_a_live_output_preview():
+    """The UI receives partial output while the command is still running."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"first line\n")
+    reader.feed_data(b"progress 1\rprogress 2\n")
+    reader.feed_eof()
+    chunks: list[str] = []
+
+    async def forward(text: str) -> None:
+        chunks.append(text)
+
+    buffer = bytearray()
+    await bash_tool_module._read_stream_into(reader, buffer, forward)
+
+    assert bytes(buffer) == b"first line\nprogress 1\rprogress 2\n"
+    forwarded = "".join(chunks)
+    assert "first line" in forwarded
+    assert "progress 2" in forwarded

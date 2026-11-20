@@ -61,9 +61,13 @@ def try_acquire_consolidation_lock(cwd: str | Path, memory_dir: str | Path | Non
     except OSError:
         holder = None
 
-    if prior_mtime is not None and time.time() - prior_mtime < HOLDER_STALE_SECONDS:
-        if holder is not None and _is_process_running(holder):
-            return None
+    if (
+        prior_mtime is not None
+        and time.time() - prior_mtime < HOLDER_STALE_SECONDS
+        and holder is not None
+        and _is_process_running(holder)
+    ):
+        return None
 
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, f"{os.getpid()}\n")

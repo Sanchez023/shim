@@ -148,3 +148,30 @@ strict = true
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
+
+# Integrations and optional extras ship no stubs (and upstream publishes none),
+# so analysing them would only produce noise. Everything under
+# ``src/openharness`` stays strictly checked; only calls *into* these packages
+# are untyped. Add a package here only when it genuinely has no typing support.
+[[tool.mypy.overrides]]
+module = [
+    "botpy",
+    "botpy.*",
+    "croniter",
+    "dingtalk_stream",
+    "dingtalk_stream.*",
+    "keyring",
+    "lark_oapi",
+    "lark_oapi.*",
+    "mistune",
+    "msgpack",
+    "nh3",
+    "nio",
+    "nio.*",
+    "pyperclip",
+    "slackify_markdown",
+    "socketio",
+    "yaml",
+]
+ignore_missing_imports = true
+follow_imports = "skip"

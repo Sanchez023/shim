@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from openharness.prompts.active_files import active_files_match_globs
 

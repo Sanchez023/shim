@@ -15,6 +15,7 @@ from openharness.tasks.summary import (
     task_elapsed_seconds,
     truncation_note,
 )
+from openharness.tasks.types import TaskRecord
 from openharness.tool_ports import get_default_agent_run_port
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -124,7 +125,7 @@ async def _collect_agent_result(
     )
 
 
-class AgentTool(BaseTool):
+class AgentTool(BaseTool[AgentToolInput]):
     """Spawn a local agent subprocess."""
 
     name = "agent"
@@ -194,18 +195,18 @@ class AgentTool(BaseTool):
         if arguments.team:
             port.attach_to_team(arguments.team, result.task_id)
 
-        if context.hook_executor is not None:
+        if (hook_executor := context.hook_executor) is not None:
             manager = get_task_manager()
             unregister = None
 
-            async def _emit_subagent_stop(task_record) -> None:
+            async def _emit_subagent_stop(task_record: TaskRecord) -> None:
                 nonlocal unregister
                 if task_record.id != result.task_id:
                     return
                 if unregister is not None:
                     unregister()
                     unregister = None
-                await context.hook_executor.execute(
+                await hook_executor.execute(
                     HookEvent.SUBAGENT_STOP,
                     {
                         "event": HookEvent.SUBAGENT_STOP.value,

@@ -102,6 +102,10 @@ test('transcript lines carry the line diff for an applied edit only', () => {
 	assert.equal(applied.find((line) => line.text === '-beta')?.kind, 'diff_del');
 	assert.equal(applied.find((line) => line.text === '+gamma')?.kind, 'diff_add');
 	assert.equal(applied.find((line) => line.text === ' alpha')?.kind, 'diff_context');
+	assert.equal(
+		applied.find((line) => line.text === '+gamma')?.language,
+		'typescript',
+	);
 
 	const rejected = buildTranscriptLines([
 		toolItem,

@@ -35,7 +35,7 @@ class OhmoCreateFeishuGroupInput(BaseModel):
     )
 
 
-class OhmoCreateFeishuGroupTool(BaseTool):
+class OhmoCreateFeishuGroupTool(BaseTool[OhmoCreateFeishuGroupInput]):
     """Create a Feishu group for the current ohmo private-chat requester."""
 
     name = "ohmo_create_feishu_group"

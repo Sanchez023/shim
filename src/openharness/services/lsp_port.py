@@ -6,6 +6,7 @@ from pathlib import Path
 
 from openharness.runtime.seams.lsp import LspLocation, LspReference
 from openharness.services.lsp import (
+    SymbolLocation,
     find_references,
     go_to_definition,
     hover,
@@ -14,7 +15,7 @@ from openharness.services.lsp import (
 )
 
 
-def _location(symbol) -> LspLocation:
+def _location(symbol: SymbolLocation) -> LspLocation:
     return LspLocation(
         name=symbol.name,
         kind=symbol.kind,

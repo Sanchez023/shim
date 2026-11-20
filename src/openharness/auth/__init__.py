@@ -13,17 +13,17 @@ from openharness.auth.storage import (
 )
 
 __all__ = [
-    "AuthManager",
     "ApiKeyFlow",
+    "AuthManager",
     "BrowserFlow",
     "DeviceCodeFlow",
-    "store_credential",
-    "load_credential",
-    "store_external_binding",
-    "load_external_binding",
     "clear_provider_credentials",
+    "decrypt",
     # Deprecated — use _obfuscate/_deobfuscate directly if needed.
     # Kept for backward compatibility; will be removed in a future version.
     "encrypt",
-    "decrypt",
+    "load_credential",
+    "load_external_binding",
+    "store_credential",
+    "store_external_binding",
 ]

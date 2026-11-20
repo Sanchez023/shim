@@ -1649,6 +1649,85 @@ async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tm
 
 
 @pytest.mark.asyncio
+async def test_parallel_tools_report_completions_as_they_finish(tmp_path: Path):
+    """A quick tool must not wait for the slowest tool in the batch.
+
+    The old ``asyncio.gather`` held every ``ToolExecutionCompleted`` until all
+    calls returned, so a fast bash call beside a long subagent looked like it
+    ran for the whole batch and its output appeared only at the end.
+    """
+    slow_started = asyncio.Event()
+    slow_release = asyncio.Event()
+    slow_finished = asyncio.Event()
+
+    class _SlowTool(BaseTool):
+        name = "slow_tool"
+        description = "Waits until released."
+        input_model = _OkInput
+
+        async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            slow_started.set()
+            await slow_release.wait()
+            slow_finished.set()
+            return ToolResult(output="slow done")
+
+    class _FastTool(BaseTool):
+        name = "fast_tool"
+        description = "Returns as soon as the slow tool has started."
+        input_model = _OkInput
+
+        async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            await slow_started.wait()
+            return ToolResult(output="fast done")
+
+    registry = ToolRegistry()
+    registry.register(_SlowTool())
+    registry.register(_FastTool())
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(id="toolu_slow", name="slow_tool", input={}),
+                            ToolUseBlock(id="toolu_fast", name="fast_tool", input={}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant", content=[TextBlock(text="done")]
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    completed: list[str] = []
+    fast_beat_slow = False
+    async for event in engine.submit_message("go"):
+        if not isinstance(event, ToolExecutionCompleted):
+            continue
+        completed.append(event.tool_name)
+        if event.tool_name == "fast_tool":
+            fast_beat_slow = not slow_finished.is_set()
+            slow_release.set()
+
+    assert completed == ["fast_tool", "slow_tool"]
+    assert fast_beat_slow
+
+
+@pytest.mark.asyncio
 async def test_context_changed_fires_when_history_grows(tmp_path: Path):
     """A UI can refresh its context meter before the next slow model call.
 

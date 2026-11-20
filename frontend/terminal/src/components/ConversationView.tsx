@@ -12,6 +12,7 @@ import {
 	TOOL_OUTPUT_PREVIEW_ROWS,
 	ToolCallDisplay,
 	buildEditPreview,
+	buildLiveOutputPreview,
 	buildToolOutputPreview,
 	summarizeToolInput,
 } from './ToolCallDisplay.js';
@@ -21,20 +22,39 @@ export type ToolPair = readonly [TranscriptItem, TranscriptItem];
 export type GroupedItem = TranscriptItem | ToolPair;
 
 export function groupToolPairs(items: TranscriptItem[]): GroupedItem[] {
-	const result: GroupedItem[] = [];
-	let i = 0;
-	while (i < items.length) {
-		const cur = items[i];
-		const next = items[i + 1];
-		if (cur.role === 'tool' && next?.role === 'tool_result') {
-			result.push([cur, next] as const);
-			i += 2;
-		} else {
-			result.push(cur);
-			i++;
+	// Parallel tools now report completions as each one finishes, so a result
+	// can arrive after other tools' results.  Pair by ``tool_use_id`` instead
+	// of adjacency; the id-less fallback keeps older transcripts working.
+	const resultById = new Map<string, TranscriptItem>();
+	for (const item of items) {
+		if (item.role === 'tool_result' && item.tool_use_id) {
+			resultById.set(item.tool_use_id, item);
 		}
 	}
-	return result;
+	const pairedResults = new Set<TranscriptItem>();
+	const grouped: GroupedItem[] = [];
+	for (let index = 0; index < items.length; index += 1) {
+		const item = items[index];
+		if (item.role === 'tool') {
+			const match = item.tool_use_id ? resultById.get(item.tool_use_id) : undefined;
+			if (match && !pairedResults.has(match)) {
+				pairedResults.add(match);
+				grouped.push([item, match] as const);
+				continue;
+			}
+			const next = items[index + 1];
+			if (next?.role === 'tool_result' && !next.tool_use_id) {
+				pairedResults.add(next);
+				grouped.push([item, next] as const);
+				continue;
+			}
+		}
+		if (item.role === 'tool_result' && pairedResults.has(item)) {
+			continue;
+		}
+		grouped.push(item);
+	}
+	return grouped;
 }
 
 /**
@@ -84,6 +104,7 @@ export function TranscriptRow({
 	outputStyle,
 	clamp = true,
 	maxTextRows,
+	maxWidth,
 }: {
 	group: GroupedItem;
 	theme: ReturnType<typeof useTheme>['theme'];
@@ -96,6 +117,8 @@ export function TranscriptRow({
 	clamp?: boolean;
 	/** Rows this row may occupy inside the live frame, when the caller knows. */
 	maxTextRows?: number;
+	/** Width of the conversation pane when a sidebar narrows it. */
+	maxWidth?: number;
 }): React.JSX.Element {
 	if (Array.isArray(group)) {
 		const [toolItem, resultItem] = group as ToolPair;
@@ -104,6 +127,7 @@ export function TranscriptRow({
 				item={toolItem}
 				resultItem={resultItem}
 				outputStyle={outputStyle}
+				width={maxWidth}
 				maxDiffRows={
 					maxTextRows
 						? Math.min(TOOL_DIFF_PREVIEW_ROWS, Math.max(2, maxTextRows - 2))
@@ -124,6 +148,7 @@ export function TranscriptRow({
 			outputStyle={outputStyle}
 			clamp={clamp}
 			maxTextRows={maxTextRows}
+			maxWidth={maxWidth}
 		/>
 	);
 }
@@ -321,8 +346,32 @@ function estimateGroupRows(
 		case 'log':
 			return Math.min(8, lines) + 1;
 		case 'tool':
-		case 'tool_result':
+		case 'tool_result': {
+			if (item.role === 'tool' && item.output) {
+				const liveLimit = Math.min(
+					TOOL_OUTPUT_PREVIEW_ROWS,
+					Math.max(2, maxTextRows - 2),
+				);
+				const live = buildLiveOutputPreview(item.output, liveLimit);
+				if (live) {
+					const toolName = item.tool_name ?? 'tool';
+					const summary = summarizeToolInput(
+						toolName,
+						item.tool_input,
+						item.text,
+					);
+					let rows = wrappedRows(`${toolName} ${summary}`, width);
+					for (const line of live.lines) {
+						rows += wrappedRows(`     ${line}`, width);
+					}
+					if (live.hidden > 0) {
+						rows += 1;
+					}
+					return rows;
+				}
+			}
 			return Math.max(1, Math.min(8, lines)) + 1;
+		}
 		case 'thinking':
 		case 'status':
 			return 1;
@@ -372,6 +421,7 @@ function ConversationViewInner({
 	appName,
 	version,
 	maxRows,
+	maxWidth,
 }: {
 	items: TranscriptItem[];
 	assistantBuffer: string;
@@ -381,17 +431,20 @@ function ConversationViewInner({
 	appName?: string;
 	version?: string;
 	maxRows?: number;
+	/** Width of the conversation pane when a sidebar narrows it. */
+	maxWidth?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const {rows: terminalRows, columns: terminalColumns} = useTerminalSize();
 	const isCodexStyle = outputStyle === 'codex';
 	const grouped = groupToolPairs(items);
 	const budget = Math.max(1, maxRows ?? terminalRows - 10);
+	const paneWidth = Math.max(20, maxWidth ?? terminalColumns - 2);
 	// One row for the "⏺" header, one for the margin above it, one spare. Ink
 	// clips whatever does not fit at the *bottom* of this box, so an item that
 	// overflows would silently lose its last lines instead of showing "… more".
 	const maxTextRows = Math.max(3, budget - 3);
-	const wrapWidth = Math.max(20, terminalColumns - 6);
+	const wrapWidth = Math.max(20, paneWidth - 4);
 	// The live answer and the conversation share one fixed-height frame. The
 	// answer is what the user is watching, so it gets the bulk of the budget, but
 	// letting it take all of it squeezed the transcript down to the single row
@@ -456,6 +509,7 @@ function ConversationViewInner({
 					theme={theme}
 					outputStyle={outputStyle}
 					maxTextRows={maxTextRows}
+					maxWidth={paneWidth}
 				/>
 			))}
 
@@ -522,12 +576,15 @@ function MessageRow({
 	outputStyle,
 	clamp = true,
 	maxTextRows,
+	maxWidth,
 }: {
 	item: TranscriptItem;
 	theme: ReturnType<typeof useTheme>['theme'];
 	outputStyle: string;
 	clamp?: boolean;
 	maxTextRows?: number;
+	/** Width of the conversation pane when a sidebar narrows it. */
+	maxWidth?: number;
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	const {rows, columns} = useTerminalSize();
@@ -535,7 +592,8 @@ function MessageRow({
 	// always shorter than the viewport. Inside the live frame the caller knows
 	// how much room is really left (the checklist and prompt eat into it).
 	const rowBudget = maxTextRows ?? Math.max(8, rows - 12);
-	const wrapWidth = Math.max(20, columns - 6);
+	const paneWidth = Math.max(20, maxWidth ?? columns - 2);
+	const wrapWidth = Math.max(20, paneWidth - 4);
 	// A hard cap only applies to the live frame. Rows printed into scrollback
 	// carry no height budget, so a finished answer is shown in full instead of
 	// collapsing into "… N more lines" that has to be reopened with ctrl+o.
@@ -629,6 +687,7 @@ function MessageRow({
 				<ToolCallDisplay
 					item={item}
 					outputStyle={outputStyle}
+					width={paneWidth}
 					maxDiffRows={Math.min(TOOL_DIFF_PREVIEW_ROWS, Math.max(2, rowBudget - 2))}
 					maxOutputRows={Math.min(TOOL_OUTPUT_PREVIEW_ROWS, Math.max(2, rowBudget - 2))}
 				/>

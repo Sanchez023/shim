@@ -56,6 +56,11 @@ class TurnLifecycleMixin:
     def _status_snapshot(self) -> BackendEvent:  # pragma: no cover - stub
         raise NotImplementedError
 
+    def _notify_turn_complete(  # pragma: no cover - stub
+        self, message_start: int, duration_seconds: float
+    ) -> None:
+        raise NotImplementedError
+
     def _is_busy_safe_line(self, line: str) -> bool:
         """Return True when *line* is a slash command that may run mid-turn."""
         bundle = self._bundle

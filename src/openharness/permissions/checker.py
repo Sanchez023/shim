@@ -184,12 +184,11 @@ class PermissionChecker:
         if file_path and self._path_rules:
             for candidate_path in _policy_match_paths(file_path):
                 for rule in self._path_rules:
-                    if fnmatch.fnmatch(candidate_path, rule.pattern):
-                        if not rule.allow:
-                            return PermissionDecision(
-                                allowed=False,
-                                reason=f"Path {file_path} matches deny rule: {rule.pattern}",
-                            )
+                    if fnmatch.fnmatch(candidate_path, rule.pattern) and not rule.allow:
+                        return PermissionDecision(
+                            allowed=False,
+                            reason=f"Path {file_path} matches deny rule: {rule.pattern}",
+                        )
 
         # Check command deny patterns (e.g. deny "rm -rf /")
         if command:

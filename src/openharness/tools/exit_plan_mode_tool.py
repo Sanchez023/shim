@@ -13,7 +13,7 @@ class ExitPlanModeToolInput(BaseModel):
     """No-op input model."""
 
 
-class ExitPlanModeTool(BaseTool):
+class ExitPlanModeTool(BaseTool[ExitPlanModeToolInput]):
     """Leave plan mode and resume with full-auto permissions.
 
     The agent-initiated exit goes to auto so implementation can continue

@@ -3,6 +3,7 @@ import {Box, Text, useInput, useStdin} from 'ink';
 import chalk from 'chalk';
 
 import {useTheme} from '../theme/ThemeContext.js';
+import {placeholderEndingAt, placeholderStartingAt} from '../pasteText.js';
 import {Spinner} from './Spinner.js';
 
 const noop = (): void => {};
@@ -76,6 +77,7 @@ function MultilineTextInput({
 	promptPrefix,
 	promptColor,
 	placeholder,
+	collapsePaste,
 }: {
 	value: string;
 	onChange: (value: string) => void;
@@ -84,6 +86,8 @@ function MultilineTextInput({
 	promptPrefix: string;
 	promptColor: string;
 	placeholder?: string;
+	/** Turn a large pasted chunk into a short placeholder token. */
+	collapsePaste?: (text: string) => string | null;
 }): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
 	const {internal_eventEmitter} = useStdin();
@@ -170,8 +174,23 @@ function MultilineTextInput({
 				return;
 			}
 
+			// A collapsed paste is one logical token: backspace/delete removes
+			// the placeholder whole instead of nibbling at its text.
+			const removePlaceholderBeforeCursor = (): boolean => {
+				const placeholder = placeholderEndingAt(value, cursorOffset);
+				if (!placeholder) {
+					return false;
+				}
+				setCursorOffset(placeholder.start);
+				commitValue(value.slice(0, placeholder.start) + value.slice(cursorOffset));
+				return true;
+			};
+
 			if (key.backspace) {
 				if (cursorOffset === 0) {
+					return;
+				}
+				if (removePlaceholderBeforeCursor()) {
 					return;
 				}
 				const deleteCount = Math.min(cursorOffset, getBackspaceDeleteCount(lastSequenceRef.current || input));
@@ -197,6 +216,9 @@ function MultilineTextInput({
 					if (cursorOffset === 0) {
 						return;
 					}
+					if (removePlaceholderBeforeCursor()) {
+						return;
+					}
 					const deleteCount = Math.min(cursorOffset, getBackspaceDeleteCount(lastSequenceRef.current));
 					let start = cursorOffset;
 					for (let index = 0; index < deleteCount; index += 1) {
@@ -211,6 +233,11 @@ function MultilineTextInput({
 				if (cursorOffset >= value.length) {
 					return;
 				}
+				const placeholderAfter = placeholderStartingAt(value, cursorOffset);
+				if (placeholderAfter) {
+					commitValue(value.slice(0, cursorOffset) + value.slice(placeholderAfter.end));
+					return;
+				}
 				const nextValue = value.slice(0, cursorOffset) + value.slice(nextGraphemeOffset(value, cursorOffset));
 				commitValue(nextValue);
 				return;
@@ -220,8 +247,11 @@ function MultilineTextInput({
 				return;
 			}
 
-			const nextValue = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
-			setCursorOffset(cursorOffset + input.length);
+			// Large pastes become a placeholder so the composer stays readable.
+			const collapsed = input.length > 1 ? collapsePaste?.(input) : null;
+			const inserted = collapsed ?? input;
+			const nextValue = value.slice(0, cursorOffset) + inserted + value.slice(cursorOffset);
+			setCursorOffset(cursorOffset + inserted.length);
 			commitValue(nextValue);
 		},
 		{isActive: focus},
@@ -285,6 +315,7 @@ export function PromptInput({
 	queuedMessages = [],
 	readOnly = false,
 	todoPanelHidden = false,
+	collapsePaste,
 }: {
 	busy: boolean;
 	input: string;
@@ -298,6 +329,8 @@ export function PromptInput({
 	queuedMessages?: string[];
 	readOnly?: boolean;
 	todoPanelHidden?: boolean;
+	/** Turn a large pasted chunk into a short placeholder token. */
+	collapsePaste?: (text: string) => string | null;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	// Keep the familiar prompt while a turn runs. The spinner above is enough of
@@ -371,6 +404,7 @@ export function PromptInput({
 					promptPrefix={promptPrefix}
 					promptColor={theme.colors.primary}
 					placeholder={placeholder}
+					collapsePaste={collapsePaste}
 				/>
 			)}
 		</Box>

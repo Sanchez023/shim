@@ -663,8 +663,9 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
         clear_output,
         user_message=None,
         print_user=None,
+        render_item=None,
     ):
-        del bundle, line, print_system, clear_output, user_message, print_user
+        del bundle, line, print_system, clear_output, user_message, print_user, render_item
         await render_event(
             CompactProgressEvent(
                 phase="compact_start",
@@ -1261,7 +1262,12 @@ async def test_backend_host_replays_restored_messages_as_transcript():
     assert [(event.item.role, event.item.text) for event in events] == [
         ("user", "earlier question"),
         ("assistant", "earlier answer"),
+        ("tool", 'bash {"command": "ls"}'),
     ]
+    tool_item = events[-1].item
+    assert tool_item.tool_name == "bash"
+    assert tool_item.tool_use_id == "tool-1"
+    assert tool_item.tool_input == {"command": "ls"}
 
 
 @pytest.mark.asyncio
@@ -1507,6 +1513,51 @@ async def test_backend_host_lists_sessions_for_a_searchable_picker(tmp_path, mon
     active = [option["value"] for option in event.select_options if option.get("active")]
     assert active == ["sid-1"]
     assert all(option["description"] == "opus" for option in event.select_options)
+
+
+@pytest.mark.asyncio
+async def test_session_picker_labels_are_single_line_and_skip_turn_context(tmp_path, monkeypatch):
+    from openharness.domain.messages import TextBlock
+    from openharness.services.session_backend import DEFAULT_SESSION_BACKEND
+    from openharness.services.session_storage import save_session_snapshot
+
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    private = TextBlock(
+        text="<turn_" + "context>\n# Current Permission Mode\nfull-auto\n</turn_" + "context>",
+        visibility="session_private",
+    )
+    save_session_snapshot(
+        cwd=tmp_path,
+        model="opus",
+        system_prompt="system",
+        messages=[
+            ConversationMessage(role="user", content=[private]),
+            ConversationMessage.from_user_text("what broke the resume picker?"),
+        ],
+        usage=UsageSnapshot(),
+        session_id="sid-ctx",
+    )
+
+    host = ReactBackendHost(BackendHostConfig())
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    host._bundle = SimpleNamespace(  # type: ignore[assignment]
+        cwd=str(tmp_path),
+        session_id="sid-ctx",
+        session_backend=DEFAULT_SESSION_BACKEND,
+    )
+    await host._handle_list_sessions()
+
+    event = next(item for item in events if item.type == "select_request")
+    [option] = event.select_options
+    assert "what broke the resume picker?" in option["label"]
+    assert "turn_" + "context" not in option["label"]
+    assert "\n" not in option["label"]
 
 
 @pytest.mark.asyncio

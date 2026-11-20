@@ -264,6 +264,29 @@ test('staticBoundary flushes the tail once a turn finishes', () => {
 	assert.equal(staticBoundary(0, 0), 0);
 });
 
+test('results pair with their tool when completions arrive out of order', () => {
+	const items: TranscriptItem[] = [
+		{role: 'tool', tool_name: 'agent', tool_use_id: 'a', text: 'agent', tool_input: {description: 'A'}},
+		{role: 'tool', tool_name: 'agent', tool_use_id: 'b', text: 'agent', tool_input: {description: 'B'}},
+		{role: 'tool', tool_name: 'bash', tool_use_id: 'c', text: 'bash', tool_input: {command: 'ls'}},
+		{role: 'tool_result', tool_use_id: 'c', text: 'bash done', is_error: false},
+		{role: 'tool_result', tool_use_id: 'a', text: 'agent A done', is_error: false},
+		{role: 'tool_result', tool_use_id: 'b', text: 'agent B done', is_error: false},
+	];
+
+	const grouped = groupToolPairs(items);
+	assert.equal(grouped.length, 3);
+	const pairs = grouped as Array<readonly [TranscriptItem, TranscriptItem]>;
+	assert.deepEqual(
+		pairs.map(([tool, result]) => [tool.tool_use_id, result.tool_use_id]),
+		[
+			['a', 'a'],
+			['b', 'b'],
+			['c', 'c'],
+		],
+	);
+});
+
 test('selectVisibleGroups keeps the newest rows that fit the budget', () => {	const groups = Array.from({length: 10}, (_, index) => ({
 		role: 'assistant' as const,
 		text: `message-${index}\n${'detail '.repeat(20)}`,

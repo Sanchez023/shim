@@ -9,8 +9,6 @@ from openharness.domain.events import EventSequencer
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.session_manager import SessionManager
 from openharness.engine.stream_events import AssistantTurnComplete
-from openharness.services.event_runtime import AsyncQueueEventSink
-from openharness.services.subscribers import JSONLEventSubscriber
 from openharness.services.agent_backend import (
     AgentCapabilities,
     LocalPythonBackend,
@@ -22,7 +20,9 @@ from openharness.services.backends.codex_app_server import (
     CodexAppServerSubagentProvider,
 )
 from openharness.services.event_log import InMemoryEventLogStore
+from openharness.services.event_runtime import AsyncQueueEventSink
 from openharness.services.subagent_provider import SubagentStartRequest
+from openharness.services.subscribers import JSONLEventSubscriber
 
 
 class FakeTransport:

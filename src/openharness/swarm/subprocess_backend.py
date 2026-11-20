@@ -69,12 +69,7 @@ class SubprocessBackend:
             extra_env = build_inherited_env_vars()
             teammate_cmd = get_teammate_command()
             if (
-                teammate_cmd.endswith("python")
-                or teammate_cmd.endswith("python3")
-                or teammate_cmd.endswith("python.exe")
-                or teammate_cmd.endswith("python3.exe")
-                or "/python" in teammate_cmd
-                or "\\python" in teammate_cmd.lower()
+                teammate_cmd.endswith(("python", "python3", "python.exe", "python3.exe")) or "/python" in teammate_cmd or "\\python" in teammate_cmd.lower()
             ):
                 argv = [teammate_cmd, "-m", "openharness", "--task-worker"] + flags
             else:

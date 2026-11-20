@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
+from typing import Any
 
+from openharness.config.settings import Settings
 from openharness.hooks.events import HookEvent
 from openharness.hooks.schemas import HookDefinition
 
@@ -46,7 +49,7 @@ class HookRegistry:
         return "\n".join(lines)
 
 
-def load_hook_registry(settings, plugins=None) -> HookRegistry:
+def load_hook_registry(settings: Settings, plugins: Iterable[Any] | None = None) -> HookRegistry:
     """Load hooks from the current settings object."""
     registry = HookRegistry()
     for raw_event, hooks in settings.hooks.items():

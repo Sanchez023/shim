@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
+    from openharness.skills.loader import (
+        discover_project_skill_dirs,
+        get_user_skill_dirs,
+        get_user_skills_dir,
+        load_skill_registry,
+    )
     from openharness.skills.registry import SkillRegistry
     from openharness.skills.types import SkillDefinition
 
@@ -18,7 +24,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in {"discover_project_skill_dirs", "get_user_skill_dirs", "get_user_skills_dir", "load_skill_registry"}:
         from openharness.skills.loader import (
             discover_project_skill_dirs,

@@ -188,7 +188,7 @@ class RepoAutopilotStore(
             return []
         payload = json.loads(raw)
         if not isinstance(payload, list):
-            raise ValueError("Expected gh JSON array output.")
+            raise TypeError("Expected gh JSON array output.")
         return [item for item in payload if isinstance(item, dict)]
 
     def _run_verification_steps(self, policies: dict[str, Any], *, cwd: Path | None = None) -> list[RepoVerificationStep]:

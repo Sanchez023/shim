@@ -1,5 +1,6 @@
 import React from 'react';
-import {Box, Text} from 'ink';
+import {Box, Text, useStdout} from 'ink';
+import stringWidth from 'string-width';
 
 import {useTheme} from '../theme/ThemeContext.js';
 
@@ -9,6 +10,27 @@ export type SelectOption = {
 	description?: string;
 	active?: boolean;
 };
+
+/** Clamp one rendered row to the terminal width (CJK-safe). */
+function clampToWidth(text: string, width: number): string {
+	if (width <= 0) {
+		return '…';
+	}
+	if (stringWidth(text) <= width) {
+		return text;
+	}
+	let used = 0;
+	let out = '';
+	for (const char of text) {
+		const charWidth = stringWidth(char);
+		if (used + charWidth > width - 1) {
+			break;
+		}
+		out += char;
+		used += charWidth;
+	}
+	return `${out}…`;
+}
 
 export function SelectModal({
 	title,
@@ -26,6 +48,10 @@ export function SelectModal({
 	totalCount?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
+	const {stdout} = useStdout();
+	const columns = stdout?.columns && stdout.columns > 0 ? stdout.columns : 80;
+	// Round border (2) + paddingX (2) + the "❯ " cursor prefix (2).
+	const maxRowWidth = Math.max(24, columns - 6);
 	const showingMatches = searchable && query.trim().length > 0;
 	const countLabel = showingMatches
 		? `${options.length}/${totalCount ?? options.length} matches`
@@ -65,12 +91,18 @@ export function SelectModal({
 						const i = windowStart + offset;
 						const isSelected = i === selectedIndex;
 						const isCurrent = opt.active;
+						const currentSuffix = isCurrent ? ' (current)' : '';
+						const descriptionSuffix = opt.description ? `  ${opt.description}` : '';
+						const label = clampToWidth(
+							opt.label,
+							maxRowWidth - stringWidth(currentSuffix) - stringWidth(descriptionSuffix),
+						);
 						return (
 							<Box key={opt.value} flexDirection="row">
 								<Text color={isSelected ? theme.colors.primary : undefined} bold={isSelected}>
 									{isSelected ? '\u276F ' : '  '}
 									<Text color={isSelected ? theme.colors.primary : undefined}>
-										{opt.label}
+										{label}
 									</Text>
 								</Text>
 								{isCurrent ? <Text color={theme.colors.success}> (current)</Text> : null}

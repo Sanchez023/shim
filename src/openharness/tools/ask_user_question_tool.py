@@ -39,7 +39,7 @@ def _accepts_options(prompt: Callable[..., Awaitable[str]]) -> bool:
     )
 
 
-class AskUserQuestionTool(BaseTool):
+class AskUserQuestionTool(BaseTool[AskUserQuestionToolInput]):
     """Ask the interactive user a question and return the answer."""
 
     name = "ask_user_question"

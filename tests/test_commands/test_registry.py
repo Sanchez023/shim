@@ -1067,6 +1067,30 @@ async def test_compact_summary_and_usage_commands(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_usage_command_reports_measured_prompt_size(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.engine.load_messages(
+        [
+            ConversationMessage(role="user", content=[TextBlock(text="alpha request")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="alpha reply")]),
+        ]
+    )
+    # The provider measured this exact prefix before the last message was added.
+    context.engine.tool_metadata["prompt_measurement"] = {"message_count": 2, "prompt_tokens": 178_000}
+
+    usage_command, usage_args = registry.lookup("/usage")
+    usage_result = await usage_command.handler(usage_args, context)
+    assert "measured by the provider" in usage_result.message
+    assert "178000" in usage_result.message
+
+    stats_command, stats_args = registry.lookup("/stats")
+    stats_result = await stats_command.handler(stats_args, context)
+    assert "178000" in stats_result.message
+
+
+@pytest.mark.asyncio
 async def test_ui_mode_commands_persist_and_update_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

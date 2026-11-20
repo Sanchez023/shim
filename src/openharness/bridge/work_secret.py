@@ -24,7 +24,7 @@ def decode_work_secret(secret: str) -> WorkSecret:
     if not data.get("session_ingress_token"):
         raise ValueError("Invalid work secret: missing session_ingress_token")
     if not isinstance(data.get("api_base_url"), str):
-        raise ValueError("Invalid work secret: missing api_base_url")
+        raise TypeError("Invalid work secret: missing api_base_url")
     return WorkSecret(
         version=data["version"],
         session_ingress_token=data["session_ingress_token"],

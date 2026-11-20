@@ -173,9 +173,7 @@ def test_typed_taxonomy_errors_report_themselves_retryable() -> None:
 def test_adapters_share_one_retry_predicate() -> None:
     """The three status-code sets had already drifted (529 on one path only)."""
     import openharness.api.client as anthropic_client
-    import openharness.api.codex_client as codex_client
-    import openharness.api.openai_client as openai_client
-    from openharness.api import transport
+    from openharness.api import codex_client, openai_client, transport
 
     # One set, owned by the transport; adapters only ever re-export it.
     assert anthropic_client.RETRYABLE_STATUS_CODES is transport.RETRYABLE_STATUS_CODES

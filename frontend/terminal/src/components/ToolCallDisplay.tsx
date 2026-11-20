@@ -1,6 +1,13 @@
 import React from 'react';
 import {Box, Text} from 'ink';
+import stringWidth from 'string-width';
 
+import {
+	CLAUDE_DIFF,
+	highlightClaudeToLines,
+	languageForPath,
+} from '../highlight.js';
+import {useTerminalSize} from '../hooks/useTerminalSize.js';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 
@@ -356,7 +363,7 @@ const TOOL_VERBS: Record<string, string> = {
 	web_search: 'WebSearch',
 };
 
-function toolVerb(toolName: string): string {
+export function toolVerb(toolName: string): string {
 	const lower = toolName.toLowerCase();
 	const known = TOOL_VERBS[lower];
 	if (known) {
@@ -367,6 +374,31 @@ function toolVerb(toolName: string): string {
 
 function pluralLines(count: number): string {
 	return `${count} line${count === 1 ? '' : 's'}`;
+}
+
+/** Tail preview of output streamed while a tool is still running. */
+export function buildLiveOutputPreview(
+	text: string | undefined,
+	maxRows: number,
+): {lines: string[]; hidden: number} | null {
+	if (!text) {
+		return null;
+	}
+	const clean = text.replace(ANSI_ESCAPE, '').replace(/\r\n/g, '\n');
+	const lines = clean
+		.split('\n')
+		.map((line) => {
+			// Progress bars redraw with \r; only the final state is meaningful.
+			const parts = line.split('\r');
+			return parts[parts.length - 1] ?? '';
+		})
+		.filter((line) => line.trim() !== '');
+	if (lines.length === 0) {
+		return null;
+	}
+	const limit = Math.max(1, maxRows);
+	const start = Math.max(0, lines.length - limit);
+	return {lines: lines.slice(start), hidden: start};
 }
 
 function toolResultOverview(toolName: string, resultItem?: TranscriptItem): string | null {
@@ -406,10 +438,31 @@ function errorDisplayLines(resultItem: TranscriptItem, isCodexStyle: boolean): s
 		: lines;
 }
 
-/** Render a Claude-style diff block: line numbers, marker, colored content. */
+function truncateToDisplayWidth(text: string, width: number): string {
+	if (width <= 0) {
+		return '…';
+	}
+	if (stringWidth(text) <= width) {
+		return text;
+	}
+	let used = 0;
+	let output = '';
+	for (const char of text) {
+		const charWidth = stringWidth(char);
+		if (used + charWidth > width - 1) {
+			break;
+		}
+		output += char;
+		used += charWidth;
+	}
+	return `${output}…`;
+}
+
+/** Render a Claude-style diff block: line numbers, markers and row tints. */
 function renderEditDiffRows(
 	rows: InlineDiffLine[],
-	theme: ReturnType<typeof useTheme>['theme'],
+	targetWidth: number,
+	language?: string,
 ): React.JSX.Element {
 	const numbers = rows
 		.flatMap((row) => [row.oldLine, row.newLine])
@@ -420,23 +473,80 @@ function renderEditDiffRows(
 			{rows.map((row, index) => {
 				const marker = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' ';
 				const lineNo = row.kind === 'del' ? row.oldLine : row.newLine;
+				const background =
+					row.kind === 'add'
+						? CLAUDE_DIFF.addedBackground
+						: row.kind === 'del'
+							? CLAUDE_DIFF.removedBackground
+							: null;
+				// The five-space indent stays outside the tint: Claude's diff
+				// starts its background at the line-number gutter, not at the
+				// conversation pane's left edge.
+				const indent = '     ';
+				const gutter = lineNo != null ? `${String(lineNo).padStart(width)} ` : '';
+				const prefixWidth = stringWidth(indent) + stringWidth(gutter);
+				const contentWidth = Math.max(1, targetWidth - prefixWidth - 1);
+				// Keep each diff row on one physical line: a wrapped long line
+				// moved the padding to the next row, leaving the tint short of
+				// the right edge.  `ctrl+o` keeps the untruncated diff.
+				const normalized = row.text.replace(/\t/g, '  ');
+				const shownText = truncateToDisplayWidth(normalized, contentWidth);
+				const spans = shownText
+					? (highlightClaudeToLines(shownText, language)[0] ?? [])
+					: [];
+				const padding = Math.max(
+					0,
+					targetWidth - prefixWidth - 1 - stringWidth(shownText),
+				);
 				return (
-					<Text
-						key={index}
-						color={
-							row.kind === 'add'
-								? theme.colors.success
-								: row.kind === 'del'
-									? theme.colors.error
-									: undefined
-						}
-						dimColor={row.kind === 'context'}
-					>
-						{'     '}
-						{lineNo != null ? `${String(lineNo).padStart(width)} ` : ''}
-						{marker}
-						{row.text}
-					</Text>
+					<Box key={index} flexDirection="row">
+						{/* An empty spacer instead of dim spaces: a dim Text leaked
+						    SGR 2 into the tinted row and made the markers faint. */}
+						<Box width={stringWidth(indent)} flexShrink={0} />
+						{/* Claude keeps the line-number gutter dim and outside the
+						    add/remove background. */}
+						<Text color={CLAUDE_DIFF.gutter} dimColor>
+							{gutter}
+						</Text>
+						<Text
+							backgroundColor={background ?? undefined}
+							color={CLAUDE_DIFF.text}
+							dimColor={row.kind === 'context'}
+						>
+							{/* Bright marker and syntax-highlighted code on the
+							    tinted row. */}
+							<Text
+								color={
+									row.kind === 'add'
+										? CLAUDE_DIFF.addedWord
+										: row.kind === 'del'
+											? CLAUDE_DIFF.removedWord
+											: undefined
+								}
+								bold={row.kind !== 'context'}
+								dimColor={row.kind === 'context'}
+							>
+								{marker}
+							</Text>
+							{spans.length > 0 ? (
+								spans.map((span, spanIndex) => (
+									<Text
+										key={spanIndex}
+										color={span.color}
+										bold={span.bold}
+										italic={span.italic}
+										dimColor={span.dim}
+										underline={span.underline}
+									>
+										{span.text}
+									</Text>
+								))
+							) : (
+								<Text>{shownText}</Text>
+							)}
+							{padding > 0 ? ' '.repeat(padding) : ''}
+						</Text>
+					</Box>
 				);
 			})}
 		</Box>
@@ -449,6 +559,7 @@ export function ToolCallDisplay({
 	outputStyle,
 	maxDiffRows = TOOL_DIFF_PREVIEW_ROWS,
 	maxOutputRows = TOOL_OUTPUT_PREVIEW_ROWS,
+	width,
 }: {
 	item: TranscriptItem;
 	resultItem?: TranscriptItem;
@@ -457,8 +568,11 @@ export function ToolCallDisplay({
 	maxDiffRows?: number;
 	/** Rows the inline shell-output preview may occupy in the live frame. */
 	maxOutputRows?: number;
+	/** Width of the conversation pane when a sidebar narrows it. */
+	width?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
+	const {columns} = useTerminalSize();
 	const isCodexStyle = outputStyle === 'codex';
 
 	if (item.role === 'tool') {
@@ -479,9 +593,22 @@ export function ToolCallDisplay({
 			!editPreview && toolName.toLowerCase() === 'bash'
 				? buildToolOutputPreview(toolName, resultItem, maxOutputRows)
 				: null;
+		const livePreview = !resultItem
+			? buildLiveOutputPreview(item.output, maxOutputRows)
+			: null;
 		const overview = toolResultOverview(toolName, resultItem);
 		const durationNode = duration ? <Text dimColor> · {duration}</Text> : null;
 		const verb = toolVerb(toolName);
+		// The conversation pane can be narrower than the terminal when the todo
+		// or swarm sidebar is open; use its real width for the diff tint.
+		const diffTargetWidth = Math.max(10, (width ?? columns - 2) - 2);
+		const diffLanguage = languageForPath(
+			typeof item.tool_input?.path === 'string'
+				? item.tool_input.path
+				: typeof item.tool_input?.file_path === 'string'
+					? item.tool_input.file_path
+					: undefined,
+		);
 
 		if (isCodexStyle) {
 			return (
@@ -492,24 +619,21 @@ export function ToolCallDisplay({
 						{duration ? ` · ${duration}` : ''}
 						{resultItem ? EXPAND_HINT : ''}
 					</Text>
-					{editPreview ? (
+					{!resultItem && livePreview ? (
 						<Box marginLeft={2} flexDirection="column">
-							{editPreview.rows.map((row, index) => (
-								<Text
-									key={index}
-									color={
-										row.kind === 'add'
-											? theme.colors.success
-											: row.kind === 'del'
-												? theme.colors.error
-												: undefined
-									}
-									dimColor={row.kind === 'context'}
-								>
-									{row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' '}
-									{row.text}
+							{livePreview.lines.map((line, index) => (
+								<Text key={index} dimColor>
+									{line}
 								</Text>
 							))}
+							{livePreview.hidden > 0 ? (
+								<Text dimColor>… {livePreview.hidden} earlier lines</Text>
+							) : null}
+						</Box>
+					) : null}
+					{editPreview ? (
+						<Box marginLeft={2} flexDirection="column">
+							{renderEditDiffRows(editPreview.rows, diffTargetWidth, diffLanguage)}
 							{editPreview.hidden > 0 ? (
 								<Text dimColor>
 									… {editPreview.hidden} more diff lines · ctrl+o full transcript
@@ -551,14 +675,33 @@ export function ToolCallDisplay({
 					{summary ? <Text dimColor>({summary})</Text> : null}
 					{durationNode}
 				</Text>
-				{editPreview ? (
+				{!resultItem && livePreview ? (
 					<Box flexDirection="column">
-						<Text dimColor>
-							{'  ⎿  '}
-							Added {pluralLines(editPreview.added)}, removed{' '}
-							{pluralLines(editPreview.removed)}
+						{livePreview.lines.map((line, index) => (
+							<Text key={index} dimColor>
+								{index === 0 ? '  ⎿  ' : '     '}
+								{line}
+							</Text>
+						))}
+						{livePreview.hidden > 0 ? (
+							<Text dimColor>
+								{'     '}… {livePreview.hidden} earlier lines
+							</Text>
+						) : null}
+					</Box>
+				) : editPreview ? (
+					<Box flexDirection="column">
+						<Text>
+							<Text dimColor>{'  ⎿  '}Added </Text>
+							<Text color={CLAUDE_DIFF.addedWord}>
+								{pluralLines(editPreview.added)}
+							</Text>
+							<Text dimColor>, removed </Text>
+							<Text color={CLAUDE_DIFF.removedWord}>
+								{pluralLines(editPreview.removed)}
+							</Text>
 						</Text>
-						{renderEditDiffRows(editPreview.rows, theme)}
+						{renderEditDiffRows(editPreview.rows, diffTargetWidth, diffLanguage)}
 						{editPreview.hidden > 0 ? (
 							<Text dimColor>
 								{'     '}… {editPreview.hidden} more diff lines · ctrl+o full transcript

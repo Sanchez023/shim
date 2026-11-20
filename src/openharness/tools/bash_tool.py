@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +16,11 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.utils.shell import create_shell_subprocess
 
 _READ_REMAINING_OUTPUT_TIMEOUT_SECONDS = 2.0
+# Throttle live-output events: a noisy command must not flood the JSON pipe.
+_STREAM_PREVIEW_INTERVAL_SECONDS = 0.1
+_STREAM_PREVIEW_TAIL_CHARS = 4_000
+
+log = logging.getLogger(__name__)
 
 
 class BashToolInput(BaseModel):
@@ -28,6 +34,8 @@ class BashToolInput(BaseModel):
     @classmethod
     def _clamp_timeout(cls, value: object) -> object:
         """Clamp oversized timeouts instead of failing the tool call."""
+        if not isinstance(value, (int, float, str)):
+            return value
         try:
             number = int(value)
         except (TypeError, ValueError):
@@ -35,7 +43,7 @@ class BashToolInput(BaseModel):
         return max(1, min(number, 3600))
 
 
-class BashTool(BaseTool):
+class BashTool(BaseTool[BashToolInput]):
     """Execute a shell command with stdout/stderr capture."""
 
     name = "bash"
@@ -106,7 +114,13 @@ class BashTool(BaseTool):
         # tool for the full timeout because of this.
         output_buffer = bytearray()
         reader = (
-            asyncio.create_task(_read_stream_into(process.stdout, output_buffer))
+            asyncio.create_task(
+                _read_stream_into(
+                    process.stdout,
+                    output_buffer,
+                    context.output_callback,
+                )
+            )
             if process.stdout is not None
             else None
         )
@@ -272,16 +286,44 @@ async def _hand_off_to_background(
 async def _read_stream_into(
     stream: asyncio.StreamReader,
     output_buffer: bytearray,
+    forward: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
-    """Copy *stream* into *output_buffer* until EOF, draining as data arrives."""
+    """Copy *stream* into *output_buffer* until EOF, draining as data arrives.
+
+    When *forward* is supplied, a trailing preview is pushed to the UI at most
+    ten times a second; the full output stays in *output_buffer*.
+    """
+    loop = asyncio.get_running_loop()
+    pending = ""
+    last_emit = 0.0
     while True:
         try:
             chunk = await stream.read(65536)
         except OSError:
-            return
+            break
         if not chunk:
-            return
+            break
         output_buffer.extend(chunk)
+        if forward is None:
+            continue
+        pending += chunk.decode("utf-8", errors="replace")
+        now = loop.time()
+        if (
+            now - last_emit >= _STREAM_PREVIEW_INTERVAL_SECONDS
+            or len(pending) >= _STREAM_PREVIEW_TAIL_CHARS
+        ):
+            try:
+                await forward(pending[-_STREAM_PREVIEW_TAIL_CHARS:])
+            except Exception:  # a broken UI must not kill the command
+                log.debug("live output forward failed", exc_info=True)
+                forward = None
+            pending = ""
+            last_emit = now
+    if forward is not None and pending:
+        try:
+            await forward(pending[-_STREAM_PREVIEW_TAIL_CHARS:])
+        except Exception:
+            log.debug("live output forward failed", exc_info=True)
 
 
 async def _settle_stream_reader(reader: asyncio.Task[None] | None) -> None:

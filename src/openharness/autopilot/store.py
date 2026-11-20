@@ -145,7 +145,7 @@ class StoreMixin(AutopilotBase):
         queued = [card for card in self._load_registry().cards if card.status == "queued"]
         if not queued:
             return None
-        return sorted(queued, key=lambda card: (-card.score, -card.updated_at, card.title.lower()))[0]
+        return min(queued, key=lambda card: (-card.score, -card.updated_at, card.title.lower()))
 
     def update_status(
         self,
@@ -222,10 +222,7 @@ class StoreMixin(AutopilotBase):
         focus = None
         for group in (running, accepted, queued):
             if group:
-                focus = sorted(
-                    group,
-                    key=lambda card: (-card.score, -card.updated_at, card.title.lower()),
-                )[0]
+                focus = min(group, key=lambda card: (-card.score, -card.updated_at, card.title.lower()))
                 break
 
         lines = [

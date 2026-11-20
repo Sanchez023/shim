@@ -5,7 +5,11 @@ import React from 'react';
 import {render} from 'ink';
 
 import {ThemeProvider} from '../theme/ThemeContext.js';
-import {ToolCallDisplay, summarizeToolInput} from './ToolCallDisplay.js';
+import {
+	ToolCallDisplay,
+	buildLiveOutputPreview,
+	summarizeToolInput,
+} from './ToolCallDisplay.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -214,6 +218,34 @@ test('bash previews the tail of a long output with an earlier-lines hint', async
 	assert.match(output, /out-8/);
 	assert.doesNotMatch(output, /out-1\b/);
 	assert.match(output, /3 earlier lines · ctrl\+o full transcript/);
+});
+
+test('a running command previews the tail of its partial output', async () => {
+	const running = {
+		role: 'tool' as const,
+		tool_name: 'bash',
+		tool_input: {command: 'make'},
+		text: 'bash',
+		output: 'one\ntwo\nthree\n',
+	};
+
+	const output = await renderOutput(
+		<ToolCallDisplay item={running} outputStyle="default" maxOutputRows={2} />,
+	);
+
+	assert.match(output, /Bash\(make\)/);
+	assert.match(output, /three/);
+	assert.doesNotMatch(output, /one\b/);
+	assert.match(output, /1 earlier line/);
+});
+
+test('live preview strips ANSI and collapses carriage-return redraws', () => {
+	const preview = buildLiveOutputPreview(
+		'\u001b[31mred\u001b[0m\n10%\r50%\r100%\nlast',
+		2,
+	);
+	assert.deepEqual(preview?.lines, ['100%', 'last']);
+	assert.equal(preview?.hidden, 1);
 });
 
 test('summarizes the result of read, grep and bash calls', async () => {

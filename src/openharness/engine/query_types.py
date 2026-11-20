@@ -92,6 +92,9 @@ class QueryContext:
     #: real request and can tell how long the prefix has been idle.
     note_model_request_start: Callable[[], None] | None = None
     note_model_request_end: Callable[[], None] | None = None
+    #: ``(tool_name, tool_use_id, chunk)`` forwarded by tools that can stream
+    #: their output (currently bash) to the running UI.
+    tool_output_callback: Callable[[str, str, str], Awaitable[None]] | None = None
 
 
 __all__ = [

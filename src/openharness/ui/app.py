@@ -53,7 +53,7 @@ async def run_repl(
     api_format: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
     backend_only: bool = False,
-    restore_messages: list[dict] | None = None,
+    restore_messages: list[dict[str, Any]] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
     permission_mode: str | None = None,
     resume_session_id: str | None = None,
@@ -375,7 +375,7 @@ async def run_print_mode(
     await start_runtime(bundle)
 
     collected_text = ""
-    events_list: list[dict] = []
+    events_list: list[dict[str, Any]] = []
 
     try:
         async def _print_system(message: str) -> None:
@@ -395,7 +395,7 @@ async def run_print_mode(
                     sys.stdout.write(event.text)
                     sys.stdout.flush()
                 elif output_format == "stream-json":
-                    obj = {"type": "assistant_delta", "text": event.text}
+                    obj: dict[str, Any] = {"type": "assistant_delta", "text": event.text}
                     print(json.dumps(obj), flush=True)
                     events_list.append(obj)
             elif isinstance(event, AssistantThinkingDelta):
@@ -408,7 +408,10 @@ async def run_print_mode(
                     sys.stdout.write("\n")
                     sys.stdout.flush()
                 elif output_format == "stream-json":
-                    obj = {"type": "assistant_complete", "text": event.message.text.strip()}
+                    obj = {
+                        "type": "assistant_complete",
+                        "text": event.message.text.strip(),
+                    }
                     print(json.dumps(obj), flush=True)
                     events_list.append(obj)
             elif isinstance(event, ToolExecutionStarted):

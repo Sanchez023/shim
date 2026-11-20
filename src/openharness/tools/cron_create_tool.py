@@ -41,7 +41,7 @@ class CronCreateToolInput(BaseModel):
     )
 
 
-class CronCreateTool(BaseTool):
+class CronCreateTool(BaseTool[CronCreateToolInput]):
     """Create or replace a local cron job."""
 
     name = "cron_create"

@@ -73,7 +73,7 @@ def test_extra_allow_paths_respected(tmp_path):
     target = extra_dir / "data.csv"
     target.touch()
 
-    allowed, reason = validate_sandbox_path(target, cwd, extra_allowed=[str(extra_dir)])
+    allowed, _reason = validate_sandbox_path(target, cwd, extra_allowed=[str(extra_dir)])
     assert allowed is True
 
 
@@ -83,7 +83,7 @@ def test_relative_path_within_cwd(tmp_path):
     target = cwd / "file.py"
     target.touch()
 
-    allowed, reason = validate_sandbox_path(target, cwd)
+    allowed, _reason = validate_sandbox_path(target, cwd)
     assert allowed is True
 
 
@@ -92,5 +92,5 @@ def test_home_dir_blocked(tmp_path):
     cwd.mkdir()
     home_file = Path.home() / ".ssh" / "id_rsa"
 
-    allowed, reason = validate_sandbox_path(home_file, cwd)
+    allowed, _reason = validate_sandbox_path(home_file, cwd)
     assert allowed is False

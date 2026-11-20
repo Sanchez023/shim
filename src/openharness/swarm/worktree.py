@@ -38,7 +38,7 @@ def validate_worktree_slug(slug: str) -> str:
         )
 
     # Reject absolute paths
-    if slug.startswith("/") or slug.startswith("\\"):
+    if slug.startswith(("/", "\\")):
         raise ValueError(f"Worktree slug must not be an absolute path: {slug!r}")
 
     for segment in slug.split("/"):

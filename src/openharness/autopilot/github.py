@@ -194,7 +194,8 @@ class GitHubMixin(AutopilotBase):
         if not normalized:
             return
         try:
-            self._run_gh(["pr", "edit", str(pr_number), *sum([["--add-label", label] for label in normalized], [])], cwd=self._cwd)
+            label_args = [flag for label in normalized for flag in ("--add-label", label)]
+            self._run_gh(["pr", "edit", str(pr_number), *label_args], cwd=self._cwd)
         except Exception:
             self.append_journal(
                 kind="github_warning",

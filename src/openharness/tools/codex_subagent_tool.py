@@ -22,7 +22,7 @@ class CodexSubagentInput(BaseModel):
     )
 
 
-class CodexSubagentTool(BaseTool):
+class CodexSubagentTool(BaseTool[CodexSubagentInput]):
     """Delegate a task to a fresh, unattended Codex thread."""
 
     name = "subagent_codex"

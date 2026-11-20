@@ -11,13 +11,6 @@ from openharness.config.settings import PermissionSettings
 from openharness.domain.events import AgentEvent, EventSequencer
 from openharness.engine.messages import ConversationMessage, ReasoningBlock, TextBlock
 from openharness.engine.query_engine import QueryEngine
-from openharness.services.event_runtime import AsyncQueueEventSink, ProjectionRegistry
-from openharness.services.projections import AuditState, MetricsState, SessionLogState
-from openharness.services.subscribers import (
-    JSONLEventSubscriber,
-    ProjectionSubscriber,
-    UIEventSubscriber,
-)
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.services.event_log import (
     InMemoryEventLogStore,
@@ -25,6 +18,13 @@ from openharness.services.event_log import (
     session_event_log_path,
 )
 from openharness.services.event_pipeline import create_event_pipeline
+from openharness.services.event_runtime import AsyncQueueEventSink, ProjectionRegistry
+from openharness.services.projections import AuditState, MetricsState, SessionLogState
+from openharness.services.subscribers import (
+    JSONLEventSubscriber,
+    ProjectionSubscriber,
+    UIEventSubscriber,
+)
 from openharness.tools import create_default_tool_registry
 
 

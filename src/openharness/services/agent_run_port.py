@@ -7,6 +7,8 @@ from ``sys.modules``) and so loading the service does not import swarm.
 
 from __future__ import annotations
 
+from typing import cast
+
 from openharness.runtime.seams.agents import (
     AgentDefinitionView,
     AgentSpawnRequest,
@@ -31,7 +33,7 @@ class ServiceAgentRunPort:
 
     async def spawn(self, request: AgentSpawnRequest) -> AgentSpawnResult:
         from openharness.swarm.registry import get_backend_registry
-        from openharness.swarm.types import TeammateSpawnConfig
+        from openharness.swarm.types import TeammateSpawnConfig, TeammateTaskType
 
         executor = get_backend_registry().get_executor("subprocess")
         result = await executor.spawn(
@@ -45,7 +47,7 @@ class ServiceAgentRunPort:
                 command=request.command,
                 system_prompt=request.system_prompt,
                 permissions=list(request.permissions),
-                task_type=request.task_type,
+                task_type=cast(TeammateTaskType, request.task_type),
             )
         )
         return AgentSpawnResult(

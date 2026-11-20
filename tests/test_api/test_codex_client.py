@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
@@ -28,7 +28,7 @@ class _FakeStreamResponse:
         self._lines = lines or []
         self._body = body.encode("utf-8")
 
-    async def __aenter__(self) -> _FakeStreamResponse:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -47,7 +47,7 @@ class _FakeAsyncClient:
         self._response = response
         self._sink = sink
 
-    async def __aenter__(self) -> _FakeAsyncClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

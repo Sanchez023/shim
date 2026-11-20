@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from openharness.runtime.seams.lsp import LspLocation, LspReference
 from openharness.tool_ports import get_default_lsp_port
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -42,7 +43,7 @@ class LspToolInput(BaseModel):
         return self
 
 
-class LspTool(BaseTool):
+class LspTool(BaseTool[LspToolInput]):
     """Read-only code intelligence for Python source files."""
 
     name = "lsp"
@@ -127,7 +128,7 @@ def _display_path(path: Path, root: Path) -> str:
         return str(path)
 
 
-def _format_symbol_locations(results, root: Path) -> str:
+def _format_symbol_locations(results: list[LspLocation], root: Path) -> str:
     if not results:
         return "(no results)"
     lines = []
@@ -142,7 +143,7 @@ def _format_symbol_locations(results, root: Path) -> str:
     return "\n".join(lines)
 
 
-def _format_references(results, root: Path) -> str:
+def _format_references(results: list[LspReference], root: Path) -> str:
     if not results:
         return "(no results)"
     return "\n".join(

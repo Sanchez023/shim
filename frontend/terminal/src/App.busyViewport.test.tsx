@@ -292,3 +292,76 @@ test('a streaming answer keeps its tail and leaves room for the conversation', a
 		stdout.destroy();
 	}
 });
+
+const liveOutputScript = `
+const emit = (event) => console.log('OHJSON:' + JSON.stringify(event));
+emit(${JSON.stringify({type: 'ready', state: {model: 'test-model'}, commands: [], command_descriptions: {}})});
+process.stdin.resume();
+let buf = '';
+process.stdin.on('data', (chunk) => {
+  buf += chunk.toString();
+  let idx;
+  while ((idx = buf.indexOf(${JSON.stringify('\n')})) >= 0) {
+    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.type !== 'submit_line') continue;
+    emit(${JSON.stringify({type: 'tool_started', tool_name: 'bash', tool_use_id: 't1', item: {role: 'tool', tool_name: 'bash', tool_use_id: 't1', tool_input: {command: 'sleep 10'}, text: 'bash'}})});
+    emit(${JSON.stringify({type: 'tool_output_delta', tool_name: 'bash', tool_use_id: 't1', message: 'stream-one\nstream-two\n'})});
+  }
+});
+`;
+
+test('running bash output is visible before the tool completes', async () => {
+	const columns = 100;
+	const rows = 30;
+	const stdin = createTestStdin();
+	const stdout = createTestStdout(columns, rows);
+	const writes: string[] = [];
+	stdout.on('data', (chunk) => {
+		writes.push(chunk.toString());
+	});
+	const waitForWrites = async (needle: string): Promise<void> => {
+		const deadline = Date.now() + 8000;
+		while (Date.now() < deadline) {
+			await settle();
+			if (writes.join('').includes(needle)) {
+				return;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	};
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', liveOutputScript]}} />,
+		{
+			stdin: stdin as unknown as NodeJS.ReadStream & {fd: 0},
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			exitOnCtrlC: false,
+			debug: true,
+			patchConsole: false,
+		},
+	);
+	const exitPromise = instance.waitUntilExit();
+	try {
+		await waitForWrites('test-model');
+		for (const char of 'go') {
+			stdin.write(char);
+		}
+		await settle();
+		stdin.write('\r');
+		await waitForWrites('stream-two');
+		const view = stripAnsi(writes.join(''));
+
+		assert.match(view, /Bash\(sleep 10\)/);
+		assert.match(view, /stream-one/);
+		assert.match(view, /stream-two/);
+	} finally {
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+		stdin.destroy();
+		stdout.destroy();
+	}
+});

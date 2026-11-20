@@ -295,7 +295,7 @@ def test_parse_malformed_yaml_falls_back():
         # Fallback Title
         Body paragraph here.
     """)
-    name, desc = parse_skill_markdown("fallback", content)
+    _name, desc = parse_skill_markdown("fallback", content)
     # Fallback scans all lines; frontmatter lines are not excluded, so
     # the first non-heading, non-delimiter line wins.  The important thing
     # is that a YAMLError doesn't crash the loader.

@@ -19,7 +19,7 @@ from openharness.api.client import SupportsStreamingMessages
 from openharness.bridge import get_bridge_manager
 from openharness.commands import MemoryCommandBackend
 from openharness.coordinator.coordinator_mode import is_coordinator_mode
-from openharness.domain.messages import ConversationMessage, ImageBlock, TextBlock
+from openharness.domain.messages import ContentBlock, ConversationMessage, ImageBlock, TextBlock
 from openharness.domain.stream_events import (
     AssistantTextDelta,
     AssistantThinkingDelta,
@@ -75,7 +75,7 @@ class BackendHostConfig:
     active_profile: str | None = None
     api_client: SupportsStreamingMessages | None = None
     cwd: str | None = None
-    restore_messages: list[dict] | None = None
+    restore_messages: list[dict[str, Any]] | None = None
     restore_tool_metadata: dict[str, object] | None = None
     enforce_max_turns: bool = True
     permission_mode: str | None = None
@@ -103,7 +103,7 @@ class ReactBackendHost(TurnLifecycleMixin):
         self._running = True
         self._active_request_task: asyncio.Task[Any] | None = None
         # Track last tool input per name for rich event emission
-        self._last_tool_inputs: dict[str, dict] = {}
+        self._last_tool_inputs: dict[str, dict[str, Any]] = {}
         self._project_files: list[str] | None = None
         self._edit_always_approved = False
         self._thinking_streamed = False
@@ -146,6 +146,11 @@ class ReactBackendHost(TurnLifecycleMixin):
         )
         await start_runtime(self._bundle)
         if self._bundle is not None:
+            set_output_callback = getattr(
+                self._bundle.engine, "set_tool_output_callback", None
+            )
+            if callable(set_output_callback):
+                set_output_callback(self._emit_tool_output)
             self._last_permission_mode = str(self._bundle.app_state.get().permission_mode or "")
         command_list = self._bundle.commands.list_commands()
         await self._emit(
@@ -313,19 +318,19 @@ class ReactBackendHost(TurnLifecycleMixin):
                 await self._emit(BackendEvent(type="error", message=f"Invalid request: {exc}"))
                 continue
             if request.type == "permission_response" and request.request_id in self._edit_approval_requests:
-                future = self._edit_approval_requests[request.request_id]
-                if not future.done():
-                    future.set_result(_edit_approval_reply_from_request(request))
+                edit_future = self._edit_approval_requests[request.request_id]
+                if not edit_future.done():
+                    edit_future.set_result(_edit_approval_reply_from_request(request))
                 continue
             if request.type == "permission_response" and request.request_id in self._permission_requests:
-                future = self._permission_requests[request.request_id]
-                if not future.done():
-                    future.set_result(bool(request.allowed))
+                permission_future = self._permission_requests[request.request_id]
+                if not permission_future.done():
+                    permission_future.set_result(bool(request.allowed))
                 continue
             if request.type == "question_response" and request.request_id in self._question_requests:
-                future = self._question_requests[request.request_id]
-                if not future.done():
-                    future.set_result(request.answer or "")
+                question_future = self._question_requests[request.request_id]
+                if not question_future.done():
+                    question_future.set_result(request.answer or "")
                 continue
             if request.type == "interrupt":
                 await self._interrupt_active_request()
@@ -333,24 +338,15 @@ class ReactBackendHost(TurnLifecycleMixin):
             await self._request_queue.put(request)
 
     async def _replay_restored_transcript(self) -> None:
-        """Replay restored session messages so the TUI is not blank after a resume."""
-        for raw in self._config.restore_messages or []:
-            try:
-                message = ConversationMessage.model_validate(raw)
-            except Exception:
-                log.debug("skipping unrestorable transcript row", exc_info=True)
-                continue
-            text = message.text.strip()
-            if not text:
-                continue
-            if message.role not in ("user", "assistant"):
-                continue
-            await self._emit(
-                BackendEvent(
-                    type="transcript_item",
-                    item=TranscriptItem(role=message.role, text=text),
-                )
-            )
+        """Replay restored session messages so the TUI is not blank after a resume.
+
+        The rows mirror a live transcript: tool calls, their collapsible
+        results and per-block text, with harness-private context dropped.
+        """
+        from openharness.ui.transcript_replay import transcript_items_for_messages
+
+        for item in transcript_items_for_messages(self._config.restore_messages or []):
+            await self._emit(BackendEvent(type="transcript_item", item=item))
 
     async def _process_line(
         self,
@@ -393,6 +389,9 @@ class ReactBackendHost(TurnLifecycleMixin):
             await self._emit(
                 BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=message))
             )
+
+        async def _render_item(item: TranscriptItem) -> None:
+            await self._emit(BackendEvent(type="transcript_item", item=item))
 
         self._thinking_streamed = False
 
@@ -535,6 +534,7 @@ class ReactBackendHost(TurnLifecycleMixin):
             "print_system": _print_system,
             "render_event": _render_event,
             "clear_output": _clear_output,
+            "render_item": _render_item,
         }
         if user_message is not None:
             handle_line_kwargs["user_message"] = user_message
@@ -665,6 +665,21 @@ class ReactBackendHost(TurnLifecycleMixin):
             duration_seconds=duration_seconds,
         )
 
+    async def _emit_tool_output(
+        self, tool_name: str, tool_use_id: str, chunk: str
+    ) -> None:
+        """Forward a partial output preview from a running tool to the TUI."""
+        if not chunk:
+            return
+        await self._emit(
+            BackendEvent(
+                type="tool_output_delta",
+                tool_name=tool_name,
+                tool_use_id=tool_use_id or None,
+                message=chunk,
+            )
+        )
+
     def _status_snapshot(self) -> BackendEvent:
         assert self._bundle is not None
         from openharness.services.compact import estimate_message_tokens
@@ -767,7 +782,9 @@ class ReactBackendHost(TurnLifecycleMixin):
         if checklist_lines:
             await self._emit_todo_markdown("\n".join(checklist_lines))
 
-    def _emit_swarm_status(self, teammates: list[dict], notifications: list[dict] | None = None) -> None:
+    def _emit_swarm_status(
+        self, teammates: list[dict[str, Any]], notifications: list[dict[str, Any]] | None = None
+    ) -> None:
         """Emit a swarm_status event synchronously (schedule as coroutine)."""
         import asyncio
         loop = asyncio.get_event_loop()
@@ -786,7 +803,10 @@ class ReactBackendHost(TurnLifecycleMixin):
         options = []
         for s in sessions:
             ts = _time.strftime("%m/%d %H:%M", _time.localtime(s["created_at"]))
-            summary = s.get("summary", "")[:70] or "(no summary)"
+            # Picker labels are one line by construction: never let a summary
+            # with embedded newlines (or a stale harness context block) turn a
+            # row into a paragraph.
+            summary = " ".join(str(s.get("summary", "")).split())[:70] or "(no summary)"
             option: dict[str, object] = {
                 "value": s["session_id"],
                 "label": f"{ts}  {s['message_count']}msg  {summary}",
@@ -943,7 +963,9 @@ def _build_user_message_with_images(
 ) -> ConversationMessage | None:
     if not images:
         return None
-    content = [TextBlock(text=line or "Please analyze the attached image.")]
+    content: list[ContentBlock] = [
+        TextBlock(text=line or "Please analyze the attached image.")
+    ]
     content.extend(
         ImageBlock(
             media_type=image.media_type,
@@ -977,7 +999,7 @@ async def run_backend_host(
     active_profile: str | None = None,
     cwd: str | None = None,
     api_client: SupportsStreamingMessages | None = None,
-    restore_messages: list[dict] | None = None,
+    restore_messages: list[dict[str, Any]] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
     enforce_max_turns: bool = True,
     permission_mode: str | None = None,

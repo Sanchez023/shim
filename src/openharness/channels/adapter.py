@@ -46,7 +46,7 @@ class ChannelBridge:
         self._engine = engine
         self._bus = bus
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Public control API

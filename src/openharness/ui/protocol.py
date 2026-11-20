@@ -111,6 +111,7 @@ class BackendEvent(BaseModel):
         "line_complete",
         "tool_started",
         "tool_completed",
+        "tool_output_delta",
         "clear_transcript",
         "modal_request",
         "select_request",

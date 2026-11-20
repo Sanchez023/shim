@@ -654,17 +654,17 @@ def register_settings_commands(registry: CommandRegistry) -> None:
                 theme = load_theme(current)
                 lines = [
                     f"Theme: {theme.name}",
-                    f"  Colors:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
+                    (f"  Colors:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
                     f"  accent={theme.colors.accent}  error={theme.colors.error}"
-                    f"  muted={theme.colors.muted}",
+                    f"  muted={theme.colors.muted}"),
                     f"           background={theme.colors.background}  foreground={theme.colors.foreground}",
                     f"  Borders: style={theme.borders.style}",
-                    f"  Icons:   spinner={theme.icons.spinner}  tool={theme.icons.tool}"
+                    (f"  Icons:   spinner={theme.icons.spinner}  tool={theme.icons.tool}"
                     f"  error={theme.icons.error}  success={theme.icons.success}"
-                    f"  agent={theme.icons.agent}",
-                    f"  Layout:  compact={theme.layout.compact}"
+                    f"  agent={theme.icons.agent}"),
+                    (f"  Layout:  compact={theme.layout.compact}"
                     f"  show_tokens={theme.layout.show_tokens}"
-                    f"  show_time={theme.layout.show_time}",
+                    f"  show_time={theme.layout.show_time}"),
                 ]
                 return CommandResult(message="\n".join(lines))
             except KeyError:
@@ -714,9 +714,9 @@ def register_settings_commands(registry: CommandRegistry) -> None:
                 f"  background {theme.colors.background}",
                 f"  foreground {theme.colors.foreground}",
                 f"  borders    {theme.borders.style}",
-                f"  icons      spinner={theme.icons.spinner} tool={theme.icons.tool}"
+                (f"  icons      spinner={theme.icons.spinner} tool={theme.icons.tool}"
                 f" success={theme.icons.success} error={theme.icons.error}"
-                f" agent={theme.icons.agent}",
+                f" agent={theme.icons.agent}"),
             ]
             return CommandResult(message="\n".join(lines))
 

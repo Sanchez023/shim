@@ -31,9 +31,13 @@ from openharness.services.compact.session_memory import try_session_memory_compa
 from openharness.services.compact.tokens import (
     AUTOCOMPACT_BUFFER_TOKENS,
     MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+    PROMPT_MEASUREMENT_KEY,
     AutoCompactState,
+    PromptMeasurement,
     estimate_message_tokens,
+    expected_prompt_tokens,
     get_autocompact_threshold,
+    measurement_from_metadata,
     should_autocompact,
 )
 
@@ -60,6 +64,7 @@ def _within_compact_cooldown(
     model: str,
     context_window_tokens: int | None,
     auto_compact_threshold_tokens: int | None,
+    measurement: PromptMeasurement | None = None,
 ) -> bool:
     """Return True when a recent compaction should suppress another one.
 
@@ -80,12 +85,23 @@ def _within_compact_cooldown(
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
     )
     hard_limit = threshold + AUTOCOMPACT_BUFFER_TOKENS * 2
-    return estimate_message_tokens(messages) < hard_limit
+    return expected_prompt_tokens(messages, measurement) < hard_limit
+
+
+def _invalidate_measurement(metadata: dict[str, Any] | None) -> None:
+    """Drop the provider measurement after the history was rewritten.
+
+    The measured prefix no longer lines up with the new message list, so using
+    it would over- or under-count by the whole rewrite.
+    """
+    if metadata is not None:
+        metadata.pop(PROMPT_MEASUREMENT_KEY, None)
 
 
 def _mark_compacted(metadata: dict[str, Any] | None) -> None:
     if metadata is not None:
         metadata["last_compact_at"] = time.time()
+    _invalidate_measurement(metadata)
 
 # ---------------------------------------------------------------------------
 # Auto-compact integration (called from query loop)
@@ -114,12 +130,14 @@ async def auto_compact_if_needed(
     Returns:
         (messages, was_compacted) — if compacted, messages is the new list.
     """
+    measurement = measurement_from_metadata(carryover_metadata)
     if not force and not should_autocompact(
         messages,
         model,
         state,
         context_window_tokens=context_window_tokens,
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+        measurement=measurement,
     ):
         return messages, False
 
@@ -129,6 +147,7 @@ async def auto_compact_if_needed(
         model=model,
         context_window_tokens=context_window_tokens,
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+        measurement=measurement,
     ):
         log.info("Skipping auto-compact inside the cache cooldown window")
         return messages, False
@@ -145,6 +164,10 @@ async def auto_compact_if_needed(
 
     # Try microcompact first — may be enough
     messages, tokens_freed = microcompact_messages(messages)
+    if tokens_freed > 0:
+        # History rewritten: the measured prefix is stale from here on.
+        _invalidate_measurement(carryover_metadata)
+        measurement = None
     _record_compact_checkpoint(
         carryover_metadata,
         checkpoint="query_microcompact_end",
@@ -159,6 +182,7 @@ async def auto_compact_if_needed(
         state,
         context_window_tokens=context_window_tokens,
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+        measurement=measurement,
     ):
         log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
         _mark_compacted(carryover_metadata)
@@ -181,6 +205,8 @@ async def auto_compact_if_needed(
             ),
         )
         messages = context_collapsed
+        _invalidate_measurement(carryover_metadata)
+        measurement = None
         await _emit_progress(
             progress_callback,
             phase="context_collapse_end",
@@ -201,6 +227,7 @@ async def auto_compact_if_needed(
             state,
             context_window_tokens=context_window_tokens,
             auto_compact_threshold_tokens=auto_compact_threshold_tokens,
+            measurement=measurement,
         ):
             _mark_compacted(carryover_metadata)
             return messages, True

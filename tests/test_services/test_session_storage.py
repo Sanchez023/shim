@@ -163,3 +163,93 @@ async def test_event_log_wins_over_snapshot_on_resume(tmp_path: Path, monkeypatc
     assert by_id is not None
     assert by_id["messages_source"] == "event_log"
     assert by_id["messages"][0]["content"][0]["text"] == "message from event log"
+
+
+CONTEXT_TAG = "<turn_" + "context>"
+
+
+def _turn_context_message(body: str = "TURN CONTEXT BODY") -> ConversationMessage:
+    text = f"{CONTEXT_TAG}\n{body}\n</turn_" + "context>"
+    return ConversationMessage(
+        role="user",
+        content=[TextBlock(text=text, visibility="session_private")],
+    )
+
+
+def test_summary_skips_private_turn_context_message(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[
+            _turn_context_message(),
+            ConversationMessage.from_user_text("fix the flaky session picker"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="on it")]),
+        ],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+    )
+
+    snapshot = load_session_snapshot(project)
+    assert snapshot is not None
+    assert snapshot["summary"] == "fix the flaky session picker"
+
+
+def test_summary_is_single_line(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    save_session_snapshot(
+        cwd=project,
+        model="claude-test",
+        system_prompt="system",
+        messages=[
+            ConversationMessage.from_user_text("first line\nsecond line\n\nthird  line")
+        ],
+        usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+    )
+
+    snapshot = load_session_snapshot(project)
+    assert snapshot is not None
+    assert snapshot["summary"] == "first line second line third line"
+
+
+def test_list_snapshots_replaces_legacy_turn_context_summary(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    from openharness.services.session_storage import list_session_snapshots
+
+    target_dir = get_project_session_dir(project)
+    context_text = f"{CONTEXT_TAG}\n# Current Permission Mode\nfull-auto\n</turn_" + "context>"
+    payload = {
+        "session_id": "legacyctx",
+        "cwd": str(project),
+        "model": "claude-test",
+        "system_prompt": "system",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": context_text, "visibility": "session_private"}
+                ],
+            },
+            {"role": "user", "content": [{"type": "text", "text": "real user prompt"}]},
+        ],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "tool_metadata": {},
+        "created_at": 1.0,
+        "summary": context_text,
+        "message_count": 2,
+    }
+    (target_dir / "session-legacyctx.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    sessions = list_session_snapshots(project)
+    assert [s["session_id"] for s in sessions] == ["legacyctx"]
+    assert sessions[0]["summary"] == "real user prompt"
+    assert "\n" not in sessions[0]["summary"]

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {highlightToLines} from './highlight.js';
+import {
+	CLAUDE_DIFF,
+	highlightClaudeToLines,
+	highlightToLines,
+	languageForPath,
+} from './highlight.js';
 import {defaultTheme} from './theme/builtinThemes.js';
 
 function text(lines: ReturnType<typeof highlightToLines>): string[] {
@@ -19,6 +24,42 @@ test('highlights keywords, strings and comments with theme colors', () => {
 		lines[0]!.some((span) => span.color === defaultTheme.colors.muted && span.italic),
 		'comment color',
 	);
+});
+
+test('maps file extensions to highlighter languages', () => {
+	assert.equal(languageForPath('src/app.ts'), 'typescript');
+	assert.equal(languageForPath('C:\\repo\\main.py'), 'python');
+	assert.equal(languageForPath('README.md'), 'markdown');
+	assert.equal(languageForPath('Makefile'), undefined);
+});
+
+test('Claude diff highlighting uses its fixed token palette', () => {
+	const lines = highlightClaudeToLines(
+		'const x: number = 1; // note\nconst s = "hi";',
+		'typescript',
+	);
+	const first = lines[0]!;
+	const span = (text: string) => first.find((item) => item.text === text);
+
+	assert.equal(span('const')?.color, 'blueBright');
+	assert.equal(span('number')?.color, 'cyan');
+	assert.equal(span('1')?.color, 'green');
+	assert.ok(
+		first.some((item) => item.text.includes('// note') && item.color === 'green'),
+		'comments are green',
+	);
+	const second = lines[1]!;
+	assert.ok(
+		second.some((item) => item.text.includes('"hi"') && item.color === 'red'),
+		'strings are red',
+	);
+});
+
+test('Claude diff backgrounds match the CLI diff theme', () => {
+	assert.equal(CLAUDE_DIFF.addedBackground, '#225c2b');
+	assert.equal(CLAUDE_DIFF.removedBackground, '#7a2936');
+	assert.equal(CLAUDE_DIFF.addedWord, '#38a660');
+	assert.equal(CLAUDE_DIFF.removedWord, '#b3596b');
 });
 
 test('falls back to plain text for unknown languages', () => {

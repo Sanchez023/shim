@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from openharness.cli_utils import _safe_short
+from openharness.skills.types import SkillDefinition
 
 _PREVIEW_STOPWORDS = {
     "a",
@@ -248,7 +249,7 @@ def _candidate_entry(name: str, description: str, *, score: int, reasons: list[s
 def _recommend_preview_candidates(
     prompt: str | None,
     *,
-    skills: list[object],
+    skills: list[SkillDefinition],
     tool_schemas: list[dict[str, object]],
     command_entries: list[dict[str, object]],
 ) -> dict[str, list[dict[str, object]]]:

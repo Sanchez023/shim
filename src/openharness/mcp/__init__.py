@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
     from openharness.mcp.client import McpClientManager, McpServerNotConnectedError
+    from openharness.mcp.config import load_mcp_server_configs
     from openharness.mcp.types import (
         McpConnectionStatus,
         McpHttpServerConfig,
@@ -32,7 +33,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "McpClientManager":
         from openharness.mcp.client import McpClientManager
 

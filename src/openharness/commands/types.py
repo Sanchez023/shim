@@ -11,6 +11,7 @@ from openharness.engine.query_engine import QueryEngine
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 
 if TYPE_CHECKING:
+    from openharness.domain.messages import ConversationMessage
     from openharness.state import AppStateStore
     from openharness.tools.base import ToolRegistry
 
@@ -22,7 +23,7 @@ class CommandResult:
     message: str | None = None
     should_exit: bool = False
     clear_screen: bool = False
-    replay_messages: list | None = None  # ConversationMessage list to replay in TUI
+    replay_messages: list[ConversationMessage] | None = None  # replayed in the TUI
     continue_pending: bool = False
     continue_turns: int | None = None
     refresh_runtime: bool = False

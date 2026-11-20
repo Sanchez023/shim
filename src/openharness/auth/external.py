@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import platform
 import re
@@ -18,6 +19,8 @@ from typing import Any
 
 from openharness.auth.storage import ExternalAuthBinding
 from openharness.utils.fs import atomic_write_text
+
+logger = logging.getLogger(__name__)
 
 CODEX_PROVIDER = "openai_codex"
 CLAUDE_PROVIDER = "anthropic_claude"
@@ -182,7 +185,7 @@ def _load_claude_credential(
 ) -> ExternalAuthCredential:
     claude_oauth = payload.get("claudeAiOauth")
     if not isinstance(claude_oauth, dict):
-        raise ValueError("Claude auth source does not contain claudeAiOauth.")
+        raise TypeError("Claude auth source does not contain claudeAiOauth.")
 
     access_token = str(claude_oauth.get("accessToken", "") or "")
     refresh_token = str(claude_oauth.get("refreshToken", "") or "")
@@ -374,6 +377,7 @@ def get_claude_code_version() -> str:
                 check=False,
             )
         except Exception:
+            logger.debug("could not run %s --version", command, exc_info=True)
             continue
         version = (result.stdout or "").strip().split(" ", 1)[0]
         if result.returncode == 0 and version and version[0].isdigit():

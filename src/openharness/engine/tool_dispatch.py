@@ -86,6 +86,7 @@ class ToolCallContext(Protocol):
     tool_executor: Any | None
     ask_user_prompt: Callable[..., Awaitable[str]] | None
     activate_tools: Callable[..., Any] | None
+    tool_output_callback: Callable[[str, str, str], Awaitable[None]] | None
 
 
 def tool_artifact_dir() -> Path:
@@ -305,6 +306,14 @@ async def execute_tool_call(
     active_backgrounds = getattr(context, "active_tool_backgrounds", None)
     if active_backgrounds is not None:
         active_backgrounds.add(background_event)
+    output_callback = None
+    stream_output = getattr(context, "tool_output_callback", None)
+    if stream_output is not None:
+
+        async def _forward_output(chunk: str) -> None:
+            await stream_output(tool_name, tool_use_id, chunk)
+
+        output_callback = _forward_output
     try:
         result = await tool.execute(
             parsed_input,
@@ -326,6 +335,7 @@ async def execute_tool_call(
                     ),
                 ),
                 background_event=background_event,
+                output_callback=output_callback,
             ),
         )
     finally:

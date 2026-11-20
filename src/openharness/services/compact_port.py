@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from openharness.domain.messages import ConversationMessage
-from openharness.services.compact import AutoCompactState
+from openharness.services.compact import AutoCompactState, CompactTrigger
 
 
 class ServiceCompactPort:
@@ -41,7 +41,7 @@ class ServiceCompactPort:
             state=state,
             progress_callback=progress_callback,
             force=force,
-            trigger=trigger,
+            trigger=cast(CompactTrigger, trigger),
             hook_executor=hook_executor,
             carryover_metadata=carryover_metadata,
             context_window_tokens=context_window_tokens,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -191,6 +191,11 @@ class QueryEngine:
         # copied into the session at turn end, so live UI estimates need this
         # view to see tool results and assistant messages as they land.
         self._active_messages: list[ConversationMessage] | None = None
+        # Optional UI hook: tools that stream output (bash) call this with
+        # ``(tool_name, tool_use_id, chunk)`` while they run.
+        self._tool_output_callback: (
+            Callable[[str, str, str], Awaitable[None]] | None
+        ) = None
         # Messages typed while a turn is already streaming; the turn loop
         # drains them at the next step boundary.
         self._pending_user_messages: list[ConversationMessage] = []
@@ -409,6 +414,13 @@ class QueryEngine:
     def set_cache_warmup(self, warmup: CacheWarmup | None) -> None:
         """Attach a warmup controller for implicit-cache providers."""
         self._cache.set_cache_warmup(warmup)
+
+    def set_tool_output_callback(
+        self,
+        callback: Callable[[str, str, str], Awaitable[None]] | None,
+    ) -> None:
+        """Stream partial tool output to the UI (``tool_name, tool_use_id, chunk``)."""
+        self._tool_output_callback = callback
 
     def set_warmup_task(self, task: asyncio.Task[None]) -> None:
         """Track the background warmup so the first turn can briefly wait."""
@@ -703,6 +715,7 @@ class QueryEngine:
             cache_diagnostics=self._cache.diagnostics,
             note_model_request_start=self.note_model_request_start,
             note_model_request_end=self.note_model_request_end,
+            tool_output_callback=self._tool_output_callback,
         )
 
     async def submit_message(self, prompt: str | ConversationMessage) -> AsyncIterator[StreamEvent]:

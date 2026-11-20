@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, create_model
 
@@ -15,7 +16,7 @@ from openharness.mcp.types import McpToolInfo
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
-class McpToolAdapter(BaseTool):
+class McpToolAdapter(BaseTool[BaseModel]):
     """Expose one MCP tool as a normal OpenHarness tool."""
 
     def __init__(self, manager: McpClientManager, tool_info: McpToolInfo) -> None:
@@ -62,16 +63,22 @@ def _input_model_from_schema(tool_name: str, schema: dict[str, object]) -> type[
     if not isinstance(properties, dict):
         return create_model(f"{tool_name.title()}Input")
 
-    fields = {}
-    required = set(schema.get("required", [])) if isinstance(schema.get("required", []), list) else set()
+    required_raw = schema.get("required", [])
+    required: set[str] = (
+        {str(item) for item in required_raw} if isinstance(required_raw, list) else set()
+    )
+    fields: dict[str, Any] = {}
     for key in properties:
-        prop = properties[key] if isinstance(properties[key], dict) else {}
+        key = str(key)
+        raw_prop = properties[key]
+        prop: dict[str, object] = raw_prop if isinstance(raw_prop, dict) else {}
         py_type = _JSON_TYPE_MAP.get(str(prop.get("type", "")), object)
         if key in required:
             fields[key] = (py_type, Field(default=...))
         else:
             fields[key] = (py_type | None, Field(default=None))
-    return create_model(f"{tool_name.title().replace('-', '_')}Input", **fields)
+    model = create_model(f"{tool_name.title().replace('-', '_')}Input", **fields)
+    return cast(type[BaseModel], model)
 
 
 def _sanitize_tool_segment(value: str) -> str:

@@ -111,22 +111,23 @@ def register_models_commands(registry: CommandRegistry) -> None:
                 message=f"Cleared pinned models for profile '{active_profile}'. Any model value is now accepted.",
                 refresh_runtime=True,
             )
+        selected_model: str | None
         if tokens[0] == "set" and len(tokens) == 2:
-            model_name = tokens[1].strip()
+            selected_model = tokens[1].strip()
         elif args.strip():
-            model_name = args.strip()
+            selected_model = args.strip()
         else:
-            model_name = None
-        if model_name:
-            if profile.allowed_models and model_name.lower() != "default" and model_name not in profile.allowed_models:
+            selected_model = None
+        if selected_model:
+            if profile.allowed_models and selected_model.lower() != "default" and selected_model not in profile.allowed_models:
                 allowed = ", ".join(profile.allowed_models)
-                return CommandResult(message=f"Model '{model_name}' is not allowed for profile '{active_profile}'. Allowed models: {allowed}")
-            if model_name.lower() == "default":
+                return CommandResult(message=f"Model '{selected_model}' is not allowed for profile '{active_profile}'. Allowed models: {allowed}")
+            if selected_model.lower() == "default":
                 manager.update_profile(active_profile, last_model="")
                 message = "Model reset to default."
             else:
-                manager.update_profile(active_profile, last_model=model_name)
-                message = f"Model set to {model_name}."
+                manager.update_profile(active_profile, last_model=selected_model)
+                message = f"Model set to {selected_model}."
             updated = load_settings()
             if context.settings_overrides is not None:
                 context.settings_overrides.pop("model", None)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
@@ -70,7 +71,7 @@ class ImageGenerationToolInput(BaseModel):
     overwrite: bool = Field(default=False, description="Whether to overwrite existing output files.")
 
 
-class ImageGenerationTool(BaseTool):
+class ImageGenerationTool(BaseTool[ImageGenerationToolInput]):
     """Generate or edit raster images and save them to local files."""
 
     name = "image_generation"
@@ -167,27 +168,29 @@ class ImageGenerationTool(BaseTool):
 
         image_results: list[str] = []
         revised_prompt: str | None = None
-        async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
-            async with client.stream("POST", url, headers=headers, json=body) as response:
-                if response.status_code >= 400:
-                    payload = await response.aread()
-                    raise RuntimeError(payload.decode("utf-8", "replace") or f"Codex request failed: {response.status_code}")
-                async for event in _iter_sse_events(response):
-                    if event.get("type") != "response.output_item.done":
-                        if event.get("type") == "response.failed":
-                            raise RuntimeError(json.dumps(event.get("response") or event, ensure_ascii=False))
-                        if event.get("type") == "error":
-                            raise RuntimeError(json.dumps(event, ensure_ascii=False))
-                        continue
-                    item = event.get("item")
-                    if not isinstance(item, dict) or item.get("type") != "image_generation_call":
-                        continue
-                    result = item.get("result")
-                    if isinstance(result, str) and result:
-                        image_results.append(result)
-                    candidate = item.get("revised_prompt")
-                    if isinstance(candidate, str) and candidate:
-                        revised_prompt = candidate
+        async with (
+            httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client,
+            client.stream("POST", url, headers=headers, json=body) as response,
+        ):
+            if response.status_code >= 400:
+                payload = await response.aread()
+                raise RuntimeError(payload.decode("utf-8", "replace") or f"Codex request failed: {response.status_code}")
+            async for event in _iter_sse_events(response):
+                if event.get("type") != "response.output_item.done":
+                    if event.get("type") == "response.failed":
+                        raise RuntimeError(json.dumps(event.get("response") or event, ensure_ascii=False))
+                    if event.get("type") == "error":
+                        raise RuntimeError(json.dumps(event, ensure_ascii=False))
+                    continue
+                item = event.get("item")
+                if not isinstance(item, dict) or item.get("type") != "image_generation_call":
+                    continue
+                result = item.get("result")
+                if isinstance(result, str) and result:
+                    image_results.append(result)
+                candidate = item.get("revised_prompt")
+                if isinstance(candidate, str) and candidate:
+                    revised_prompt = candidate
         if not image_results:
             raise RuntimeError("Codex hosted image_generation returned no image result")
         return image_results, revised_prompt
@@ -314,7 +317,7 @@ def _media_type_for_path(path: Path) -> str:
     }.get(path.suffix.lower(), "image/png")
 
 
-async def _iter_sse_events(response: httpx.Response):
+async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
     data_lines: list[str] = []
     async for line in response.aiter_lines():
         if line == "":

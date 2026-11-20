@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
@@ -28,6 +28,9 @@ class ToolExecutionContext:
     #: Set when the user asks (Ctrl+B) for a long-running call to continue in
     #: the background.  Tools that cannot be detached simply ignore it.
     background_event: asyncio.Event | None = None
+    #: Stream a preview of partial output to the UI while the tool is running.
+    #: Tools that cannot stream simply ignore it.
+    output_callback: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -43,23 +46,32 @@ class ToolResult:
     images: list[ImageBlock] = field(default_factory=list)
 
 
-class BaseTool(ABC):
-    """Base class for all OpenHarness tools."""
+ParamsT = TypeVar("ParamsT", bound=BaseModel)
+
+
+class BaseTool(ABC, Generic[ParamsT]):
+    """Base class for all OpenHarness tools.
+
+    ``ParamsT`` is the tool's own ``input_model``.  Parameterising the base
+    lets each subclass narrow ``execute``/``is_read_only`` to its real argument
+    model instead of re-checking ``isinstance`` after the dispatch layer has
+    already validated it.
+    """
 
     name: str
     description: str
-    input_model: type[BaseModel]
+    input_model: type[ParamsT]
 
     @abstractmethod
-    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, arguments: ParamsT, context: ToolExecutionContext) -> ToolResult:
         """Execute the tool."""
 
-    def is_read_only(self, arguments: BaseModel) -> bool:
+    def is_read_only(self, arguments: ParamsT) -> bool:
         """Return whether the invocation is read-only."""
         del arguments
         return False
 
-    def read_only_verdict(self, arguments: BaseModel) -> str | None:
+    def read_only_verdict(self, arguments: ParamsT) -> str | None:
         """Return ``"read_only"``/``"mutating"``/``"unknown"`` when known.
 
         Most tools are statically one or the other, so ``None`` means "no finer
@@ -70,7 +82,7 @@ class BaseTool(ABC):
         del arguments
         return None
 
-    def read_only_reason(self, arguments: BaseModel) -> str | None:
+    def read_only_reason(self, arguments: ParamsT) -> str | None:
         """Return a short machine-readable reason for :meth:`read_only_verdict`.
 
         Surfaced in the ``permission.decided`` event so blocked constructs can be
@@ -93,17 +105,17 @@ class ToolRegistry:
     """Map tool names to implementations."""
 
     def __init__(self) -> None:
-        self._tools: dict[str, BaseTool] = {}
+        self._tools: dict[str, BaseTool[Any]] = {}
 
-    def register(self, tool: BaseTool) -> None:
+    def register(self, tool: BaseTool[Any]) -> None:
         """Register a tool instance."""
         self._tools[tool.name] = tool
 
-    def get(self, name: str) -> BaseTool | None:
+    def get(self, name: str) -> BaseTool[Any] | None:
         """Return a registered tool by name."""
         return self._tools.get(name)
 
-    def list_tools(self) -> list[BaseTool]:
+    def list_tools(self) -> list[BaseTool[Any]]:
         """Return all registered tools."""
         return list(self._tools.values())
 

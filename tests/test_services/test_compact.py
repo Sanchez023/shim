@@ -12,6 +12,7 @@ from openharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
     TextBlock,
+    ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -27,10 +28,14 @@ from openharness.services import (
 )
 from openharness.services.compact import (
     AutoCompactState,
+    PromptMeasurement,
     _is_prompt_too_long_error,
     auto_compact_if_needed,
+    expected_prompt_tokens,
     get_autocompact_threshold,
+    measurement_from_metadata,
     microcompact_messages,
+    record_prompt_measurement,
     should_autocompact,
     try_context_collapse,
     try_session_memory_compaction,
@@ -296,6 +301,26 @@ def test_microcompact_compacts_large_non_allowlisted_results(monkeypatch):
 def test_compact_prompt_too_long_detection_handles_llama_cpp_errors():
     assert _is_prompt_too_long_error(
         RuntimeError("exceed_context_size_error: prompt exceeds the available context size")
+    )
+
+
+def test_compact_token_estimate_counts_thinking_blocks():
+    # Extended thinking is replayed verbatim on every request, so it is billed
+    # input. Ignoring it under-reported a real 260k prompt as 170k.
+    thinking = ThinkingBlock(thinking="x" * 400, signature="s" * 40)
+    messages = [ConversationMessage(role="assistant", content=[thinking])]
+
+    expected = int((estimate_tokens("x" * 400) + estimate_tokens("s" * 40)) * (4 / 3))
+    assert estimate_compact_message_tokens(messages) == expected
+    assert expected > 0
+
+
+def test_compact_token_estimate_counts_redacted_thinking_payload():
+    redacted = ThinkingBlock(thinking="", signature="d" * 400, redacted=True)
+    messages = [ConversationMessage(role="assistant", content=[redacted])]
+
+    assert estimate_compact_message_tokens(messages) == int(
+        estimate_tokens("d" * 400) * (4 / 3)
     )
 
 
@@ -687,3 +712,61 @@ async def test_recent_compaction_suppresses_another_within_cooldown(monkeypatch)
 
     assert compacted is False
     assert result is messages
+
+
+def test_prompt_measurement_anchors_estimate_on_real_usage():
+    """The provider's own prompt count beats a pure estimate.
+
+    A long reasoning session bills ~260k prompt tokens while the message text
+    only estimates ~170k; anchoring on the last reported number and estimating
+    just the delta removes that bias.
+    """
+    messages = [ConversationMessage.from_user_text("x" * 400) for _ in range(10)]
+    delta = [ConversationMessage.from_user_text("y" * 400)]
+    metadata: dict[str, object] = {}
+
+    assert record_prompt_measurement(metadata, message_count=10, prompt_tokens=200_000)
+    measurement = measurement_from_metadata(metadata)
+    assert measurement is not None
+
+    expected = 200_000 + estimate_compact_message_tokens(delta)
+    assert expected_prompt_tokens(messages + delta, measurement) == expected
+    # Without the measurement the same list looks ~1000x smaller.
+    assert expected_prompt_tokens(messages + delta) < 5_000
+
+
+def test_prompt_measurement_falls_back_after_history_rewrite():
+    messages = [ConversationMessage.from_user_text("x" * 400) for _ in range(3)]
+    measurement = PromptMeasurement(message_count=99, prompt_tokens=200_000)
+
+    # The measured prefix is longer than the current list: compaction dropped
+    # messages, so the measurement is stale and must not be used.
+    assert expected_prompt_tokens(messages, measurement) == estimate_compact_message_tokens(messages)
+
+
+def test_should_autocompact_uses_measured_prompt_size():
+    messages = [ConversationMessage.from_user_text("x" * 400)]
+    state = AutoCompactState()
+    measurement = PromptMeasurement(message_count=1, prompt_tokens=200_000)
+
+    assert should_autocompact(
+        messages, "deepseek-chat", state, auto_compact_threshold_tokens=160_000
+    ) is False
+    assert should_autocompact(
+        messages,
+        "deepseek-chat",
+        state,
+        auto_compact_threshold_tokens=160_000,
+        measurement=measurement,
+    ) is True
+
+
+def test_prompt_measurement_ignores_unusable_metadata():
+    assert measurement_from_metadata(None) is None
+    assert measurement_from_metadata({}) is None
+    assert measurement_from_metadata({"prompt_measurement": "nope"}) is None
+    assert measurement_from_metadata({"prompt_measurement": {"message_count": -1, "prompt_tokens": 10}}) is None
+    assert measurement_from_metadata({"prompt_measurement": {"message_count": 1, "prompt_tokens": 0}}) is None
+    metadata: dict[str, object] = {}
+    assert record_prompt_measurement(metadata, message_count=1, prompt_tokens=0) is False
+    assert metadata == {}

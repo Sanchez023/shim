@@ -29,7 +29,7 @@ class GrepToolInput(BaseModel):
     timeout_seconds: int = Field(default=20, ge=1, le=120)
 
 
-class GrepTool(BaseTool):
+class GrepTool(BaseTool[GrepToolInput]):
     """Search text files for a regex pattern."""
 
     name = "grep"

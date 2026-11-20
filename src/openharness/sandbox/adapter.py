@@ -133,16 +133,13 @@ def wrap_command_for_sandbox(
 
 def _write_runtime_settings(payload: dict[str, Any]) -> Path:
     """Persist a temporary settings file for one sandboxed child process."""
-    tmp = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         prefix="openharness-sandbox-",
         suffix=".json",
         delete=False,
-    )
-    try:
+    ) as tmp:
         json.dump(payload, tmp)
         tmp.write("\n")
-    finally:
-        tmp.close()
     return Path(tmp.name)

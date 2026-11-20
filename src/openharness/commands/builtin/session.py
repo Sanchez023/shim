@@ -21,8 +21,9 @@ from openharness.services import (
     build_post_compact_messages,
     compact_conversation,
     compact_messages,
-    estimate_conversation_tokens,
     estimate_tokens,
+    expected_prompt_tokens,
+    measurement_from_metadata,
     summarize_messages,
 )
 from openharness.services.session_storage import (
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 def _format_rate(value: object) -> str:
     """Format an optional 0..1 hit rate as a percentage."""
-    if value is None:
+    if not isinstance(value, (int, float, str)):
         return "n/a"
     try:
         return f"{float(value) * 100:.1f}%"
@@ -140,13 +141,18 @@ def register_session_commands(registry: CommandRegistry) -> None:
 
     async def _usage_handler(_: str, context: CommandContext) -> CommandResult:
         usage = context.engine.total_usage
-        estimated = estimate_conversation_tokens(context.engine.messages)
+        messages = context.engine.messages
+        measurement = measurement_from_metadata(context.engine.tool_metadata)
+        # The provider reports the real prompt size on every response; only fall
+        # back to a full estimate before the first response of a session.
+        measured_prompt = measurement is not None and 0 <= measurement.message_count <= len(messages)
+        prompt_tokens = expected_prompt_tokens(messages, measurement)
         system_prompt = context.engine.system_prompt or ""
         system_tokens = estimate_tokens(system_prompt)
         tool_schemas = context.engine.visible_tool_schemas()
         tools_json = json.dumps(tool_schemas, ensure_ascii=False) if tool_schemas else ""
         tool_tokens = estimate_tokens(tools_json)
-        total_tokens = system_tokens + tool_tokens + estimated
+        total_tokens = prompt_tokens if measured_prompt else system_tokens + tool_tokens + prompt_tokens
         cache = context.engine.cache_summary
         hit_rate = _format_rate(cache.get("cache_hit_rate"))
         hot_rate = _format_rate(cache.get("hot_cache_hit_rate"))
@@ -180,13 +186,18 @@ def register_session_commands(registry: CommandRegistry) -> None:
                 f"anomalies={cache.get('anomaly_misses', 0)} "
                 f"alerts={cache.get('alerts', 0)}\n"
                 f"{warmup_line}"
-                "Estimated context breakdown:\n"
-                f"- system prompt: ~{system_tokens} tokens ({len(system_prompt)} chars)\n"
-                f"- tools: ~{tool_tokens} tokens "
-                f"({len(tool_schemas)} tools, {len(tools_json)} chars)\n"
-                f"- conversation: ~{estimated} tokens\n"
-                f"- total: ~{total_tokens} tokens\n"
-                f"Messages: {len(context.engine.messages)}"
+                + (
+                    "Prompt size (measured by the provider):\n"
+                    f"- prompt: {prompt_tokens} tokens\n"
+                    if measured_prompt
+                    else "Estimated context breakdown:\n"
+                    f"- system prompt: ~{system_tokens} tokens ({len(system_prompt)} chars)\n"
+                    f"- tools: ~{tool_tokens} tokens "
+                    f"({len(tool_schemas)} tools, {len(tools_json)} chars)\n"
+                    f"- conversation: ~{prompt_tokens} tokens\n"
+                )
+                + f"- total: ~{total_tokens} tokens\n"
+                f"Messages: {len(messages)}"
             )
         )
 
@@ -224,7 +235,7 @@ def register_session_commands(registry: CommandRegistry) -> None:
             message=(
                 "Session stats:\n"
                 f"- messages: {len(context.engine.messages)}\n"
-                f"- estimated_tokens: {estimate_conversation_tokens(context.engine.messages)}\n"
+                f"- tokens: {expected_prompt_tokens(context.engine.messages, measurement_from_metadata(context.engine.tool_metadata))}\n"
                 f"- tools: {tool_count}\n"
                 f"- memory_files: {memory_count}\n"
                 f"- background_tasks: {task_count}\n"

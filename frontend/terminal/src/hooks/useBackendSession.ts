@@ -478,6 +478,28 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusyLabel(undefined);
 			return;
 		}
+		if (event.type === 'tool_output_delta') {
+			const toolUseId = event.tool_use_id;
+			const delta = event.message ?? '';
+			if (!toolUseId || !delta) {
+				return;
+			}
+			setTranscript((items) => {
+				const index = items.findIndex(
+					(item) => item.role === 'tool' && item.tool_use_id === toolUseId,
+				);
+				if (index < 0) {
+					return items;
+				}
+				const previous = items[index]?.output ?? '';
+				const next = items.slice();
+				// Only the tail matters for the running preview; cap the buffer
+				// so a chatty command cannot grow the transcript without bound.
+				next[index] = {...items[index], output: `${previous}${delta}`.slice(-8_000)};
+				return next;
+			});
+			return;
+		}
 		if (event.type === 'tool_completed') {
 			// Bumped so the UI can flush queued prompts at a natural boundary
 			// instead of waiting for the whole turn to finish.
@@ -538,7 +560,16 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 						? Date.now() - startedAt
 						: event.item.duration_ms,
 			};
-			queueTranscriptItem(enrichedItem);
+			if (event.type === 'tool_started') {
+				// Install the row immediately: live output deltas that follow it
+				// must find the tool by id.  Queued rows are folded into the same
+				// update so the order is unchanged.
+				const pending = pendingTranscriptItemsRef.current;
+				pendingTranscriptItemsRef.current = [];
+				setTranscript((items) => [...items, ...pending, enrichedItem]);
+			} else {
+				queueTranscriptItem(enrichedItem);
+			}
 			return;
 		}
 		if (event.type === 'clear_transcript') {

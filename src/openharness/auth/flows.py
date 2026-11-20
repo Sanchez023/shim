@@ -97,7 +97,7 @@ class DeviceCodeFlow(AuthFlow):
                 # execute appended commands when a hostile or compromised
                 # device-flow endpoint returned a URL like
                 # ``https://x.com&calc.exe``.
-                os.startfile(url)  # type: ignore[attr-defined]
+                os.startfile(url)
                 return True
             # Linux / WSL
             proc = subprocess.Popen(

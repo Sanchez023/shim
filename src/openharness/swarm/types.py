@@ -250,6 +250,9 @@ class TeammateIdentity:
     """Parent session ID for context linking."""
 
 
+TeammateTaskType = Literal["local_agent", "remote_agent", "in_process_teammate"]
+
+
 @dataclass
 class TeammateSpawnConfig:
     """Configuration for spawning a teammate (any execution mode)."""
@@ -305,7 +308,7 @@ class TeammateSpawnConfig:
     subscriptions: list[str] = field(default_factory=list)
     """Event topics this teammate subscribes to."""
 
-    task_type: Literal["local_agent", "remote_agent", "in_process_teammate"] = "local_agent"
+    task_type: TeammateTaskType = "local_agent"
     """Background task type recorded for subprocess-backed teammates."""
 
 

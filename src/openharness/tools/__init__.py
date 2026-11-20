@@ -1,5 +1,6 @@
 """Built-in tool registration."""
 
+from openharness.mcp.client import McpClientManager
 from openharness.tools.agent_tool import AgentTool
 from openharness.tools.ask_user_question_tool import AskUserQuestionTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
@@ -46,7 +47,7 @@ from openharness.tools.web_search_tool import WebSearchTool
 
 
 def create_default_tool_registry(
-    mcp_manager=None,
+    mcp_manager: McpClientManager | None = None,
     *,
     include_codex_subagent: bool = False,
 ) -> ToolRegistry:

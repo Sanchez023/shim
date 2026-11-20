@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
     from openharness.permissions.checker import PermissionChecker, PermissionDecision
@@ -11,7 +11,7 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = ["PermissionChecker", "PermissionDecision", "PermissionMode"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in {"PermissionChecker", "PermissionDecision"}:
         from openharness.permissions.checker import PermissionChecker, PermissionDecision
 

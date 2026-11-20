@@ -18,7 +18,9 @@ from openharness.coordinator.coordinator_mode import (
     format_task_notification,
 )
 from openharness.engine.query import MaxTurnsExceeded
+from openharness.services.assembly import RuntimeBundle
 from openharness.tasks.manager import get_task_manager
+from openharness.ui.runtime import StreamRenderer, SystemPrinter
 
 _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "killed"})
 
@@ -114,12 +116,12 @@ def format_completed_task_notifications(completed: list[dict[str, object]]) -> s
 
 
 async def submit_follow_up(
-    bundle,
+    bundle: RuntimeBundle,
     message: str,
     *,
     prompt_seed: str,
-    print_system,
-    render_event,
+    print_system: SystemPrinter,
+    render_event: StreamRenderer,
 ) -> None:
     from openharness.ui.runtime import _format_pending_tool_results
 
@@ -148,11 +150,11 @@ async def submit_follow_up(
 
 
 async def drain_coordinator_async_agents(
-    bundle,
+    bundle: RuntimeBundle,
     *,
     prompt_seed: str,
-    print_system,
-    render_event,
+    print_system: SystemPrinter,
+    render_event: StreamRenderer,
     announce_waiting: bool = True,
 ) -> None:
     """Block until pending async-agent tasks finish, then submit notifications.

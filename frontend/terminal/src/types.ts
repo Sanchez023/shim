@@ -14,6 +14,8 @@ export type TranscriptItem = {
 	tool_input?: Record<string, unknown>;
 	is_error?: boolean;
 	duration_ms?: number;
+	/** Partial output streamed while a tool is still running. */
+	output?: string;
 	/** Tool-result metadata; edit results carry a unified diff and counts. */
 	metadata?: Record<string, unknown>;
 };

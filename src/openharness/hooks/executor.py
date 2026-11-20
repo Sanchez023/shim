@@ -15,6 +15,8 @@ import httpx
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
+    ApiTextDeltaEvent,
+    ApiThinkingDeltaEvent,
     SupportsStreamingMessages,
 )
 from openharness.domain.messages import ConversationMessage
@@ -203,7 +205,7 @@ class HookExecutor:
         async for event_item in self._context.api_client.stream_message(request):
             if isinstance(event_item, ApiMessageCompleteEvent):
                 final_event = event_item
-            else:
+            elif isinstance(event_item, (ApiTextDeltaEvent, ApiThinkingDeltaEvent)):
                 text_chunks.append(event_item.text)
 
         text = "".join(text_chunks)

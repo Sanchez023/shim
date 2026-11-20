@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from openharness.domain.messages import (
     ConversationMessage,
     ImageBlock,
     TextBlock,
+    ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -49,6 +51,15 @@ def estimate_message_tokens(messages: list[ConversationMessage]) -> int:
             elif isinstance(block, ToolUseBlock):
                 total += estimate_tokens(block.name)
                 total += estimate_tokens(str(block.input))
+            elif isinstance(block, ThinkingBlock):
+                # Extended-thinking blocks are replayed verbatim on every
+                # request (and their signature too), so they are billed like
+                # any other content. Leaving them out made the estimate
+                # under-report a long reasoning session by ~35%: a 260k-token
+                # prompt looked like 170k, so auto-compact fired late and then
+                # kept re-firing because it could never get back under budget.
+                total += estimate_tokens(block.thinking)
+                total += estimate_tokens(block.signature)
             elif isinstance(block, ImageBlock):
                 total += image_token_estimate
     return int(total * TOKEN_ESTIMATION_PADDING)
@@ -56,6 +67,66 @@ def estimate_message_tokens(messages: list[ConversationMessage]) -> int:
 
 def estimate_conversation_tokens(messages: list[ConversationMessage]) -> int:
     """Alias kept for backward compatibility."""
+    return estimate_message_tokens(messages)
+
+
+#: Key under which the last provider-reported prompt size is stashed in
+#: ``TurnContext.tool_metadata`` / the snapshot's ``tool_metadata``.
+PROMPT_MEASUREMENT_KEY = "prompt_measurement"
+
+
+@dataclass(frozen=True)
+class PromptMeasurement:
+    """What the provider actually charged for a known message-list prefix.
+
+    Estimation is only a fallback: every response tells us the real prompt size
+    (``usage.prompt_tokens``) for the exact message list we just sent. Anchoring
+    on that number and estimating only the *delta* added since gives an error of
+    a few hundred tokens instead of the systematic bias a pure estimate has.
+    """
+
+    message_count: int
+    prompt_tokens: int
+
+    @classmethod
+    def from_mapping(cls, raw: object) -> PromptMeasurement | None:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            message_count = int(raw.get("message_count"))  # type: ignore[arg-type]
+            prompt_tokens = int(raw.get("prompt_tokens"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if message_count < 0 or prompt_tokens <= 0:
+            return None
+        return cls(message_count=message_count, prompt_tokens=prompt_tokens)
+
+    def to_mapping(self) -> dict[str, int]:
+        return {"message_count": self.message_count, "prompt_tokens": self.prompt_tokens}
+
+
+def measurement_from_metadata(metadata: Mapping[str, object] | None) -> PromptMeasurement | None:
+    """Read the last provider measurement stored alongside a turn."""
+    if not metadata:
+        return None
+    return PromptMeasurement.from_mapping(metadata.get(PROMPT_MEASUREMENT_KEY))
+
+
+def expected_prompt_tokens(
+    messages: list[ConversationMessage],
+    measurement: PromptMeasurement | None = None,
+) -> int:
+    """Best available prompt size: measured total plus an estimated delta.
+
+    Falls back to a pure estimate when there is no measurement yet, or when the
+    history was rewritten (compaction, ``/clear``) so that the measured prefix
+    no longer lines up with the current list.
+    """
+    if measurement is not None and 0 <= measurement.message_count <= len(messages):
+        delta = messages[measurement.message_count :]
+        if not delta:
+            return measurement.prompt_tokens
+        return measurement.prompt_tokens + estimate_message_tokens(delta)
     return estimate_message_tokens(messages)
 
 
@@ -116,14 +187,35 @@ def should_autocompact(
     *,
     context_window_tokens: int | None = None,
     auto_compact_threshold_tokens: int | None = None,
+    measurement: PromptMeasurement | None = None,
 ) -> bool:
     """Return True when the conversation should be auto-compacted."""
     if state.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
         return False
-    token_count = estimate_message_tokens(messages)
+    token_count = expected_prompt_tokens(messages, measurement)
     threshold = get_autocompact_threshold(
         model,
         context_window_tokens=context_window_tokens,
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
     )
     return token_count >= threshold
+
+
+def record_prompt_measurement(
+    metadata: dict[str, object] | None,
+    *,
+    message_count: int,
+    prompt_tokens: int,
+) -> bool:
+    """Store the provider-reported prompt size for the message list just sent.
+
+    Returns False when there is nothing to record (no metadata dict, or a usage
+    block the provider did not fill in).
+    """
+    if metadata is None or prompt_tokens <= 0 or message_count < 0:
+        return False
+    metadata[PROMPT_MEASUREMENT_KEY] = {
+        "message_count": message_count,
+        "prompt_tokens": prompt_tokens,
+    }
+    return True

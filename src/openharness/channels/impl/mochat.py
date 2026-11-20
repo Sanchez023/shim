@@ -6,9 +6,10 @@ import asyncio
 import json
 import logging
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol, TypeAlias, cast
 
 import httpx
 
@@ -36,6 +37,68 @@ except ImportError:
 MAX_SEEN_MESSAGE_IDS = 2000
 CURSOR_SAVE_DEBOUNCE_S = 0.5
 
+_AsyncHandler: TypeAlias = Callable[..., Awaitable[None]]
+
+
+class _AsyncSocketIOClient(Protocol):
+    """The slice of ``socketio.AsyncClient`` this adapter uses.
+
+    ``python-socketio`` ships no typing, so the ``event``/``on`` decorators
+    would make every registered handler untyped without this declaration.
+    """
+
+    def event(self, handler: _AsyncHandler) -> _AsyncHandler: ...
+
+    def on(self, message: str, handler: _AsyncHandler | None = None) -> _AsyncHandler: ...
+
+    async def connect(self, url: str, **kwargs: Any) -> None: ...
+
+    async def disconnect(self) -> None: ...
+
+    async def call(self, event: str, data: Any = ..., **kwargs: Any) -> Any: ...
+
+
+class _MochatMentionConfig(Protocol):
+    """``channels.mochat.mention`` policy block."""
+
+    require_in_groups: bool
+
+
+class _MochatGroupConfig(Protocol):
+    """Per-group entry of ``channels.mochat.groups``."""
+
+    require_mention: bool
+
+
+class _MochatChannelConfig(Protocol):
+    """Adapter-specific view of ``MochatConfig``.
+
+    ``MochatConfig`` is a pydantic model with ``extra="allow"``, so the
+    socket/watch/reply settings below are undeclared on the model even though
+    the adapter reads them.  Declaring the surface here keeps the reads typed.
+    """
+
+    base_url: str
+    claw_token: str
+    agent_user_id: str
+    sessions: list[str]
+    panels: list[str]
+    groups: dict[str, _MochatGroupConfig]
+    mention: _MochatMentionConfig
+    socket_url: str | None
+    socket_path: str | None
+    socket_disable_msgpack: bool
+    socket_connect_timeout_ms: float
+    socket_reconnect_delay_ms: float
+    socket_max_reconnect_delay_ms: float
+    max_retry_attempts: int
+    watch_limit: int
+    watch_timeout_ms: int
+    refresh_interval_ms: float
+    retry_delay_ms: float
+    reply_delay_ms: int
+    reply_delay_mode: str
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -58,7 +121,7 @@ class DelayState:
     """Per-target delayed message state."""
     entries: list[MochatBufferedEntry] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    timer: asyncio.Task | None = None
+    timer: asyncio.Task[None] | None = None
 
 
 @dataclass
@@ -72,12 +135,12 @@ class MochatTarget:
 # Pure helpers
 # ---------------------------------------------------------------------------
 
-def _safe_dict(value: Any) -> dict:
+def _safe_dict(value: Any) -> dict[str, Any]:
     """Return *value* if it's a dict, else empty dict."""
     return value if isinstance(value, dict) else {}
 
 
-def _str_field(src: dict, *keys: str) -> str:
+def _str_field(src: dict[str, Any], *keys: str) -> str:
     """Return the first non-empty str value found for *keys*, stripped."""
     for k in keys:
         v = src.get(k)
@@ -173,7 +236,7 @@ def resolve_was_mentioned(payload: dict[str, Any], agent_user_id: str) -> bool:
     return f"<@{agent_user_id}>" in content or f"@{agent_user_id}" in content
 
 
-def resolve_require_mention(config: MochatConfig, session_id: str, group_id: str) -> bool:
+def resolve_require_mention(config: _MochatChannelConfig, session_id: str, group_id: str) -> bool:
     """Resolve mention requirement for group/panel conversations."""
     groups = config.groups or {}
     for key in (group_id, session_id, "*"):
@@ -206,7 +269,7 @@ def parse_timestamp(value: Any) -> int | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        return int(datetime.fromisoformat(value).timestamp() * 1000)
     except ValueError:
         return None
 
@@ -222,7 +285,7 @@ class MochatChannel(BaseChannel):
 
     def __init__(self, config: MochatConfig, bus: MessageBus):
         super().__init__(config, bus)
-        self.config: MochatConfig = config
+        self.config: _MochatChannelConfig = cast(_MochatChannelConfig, config)
         self._http: httpx.AsyncClient | None = None
         self._socket: Any = None
         self._ws_connected = self._ws_ready = False
@@ -230,7 +293,7 @@ class MochatChannel(BaseChannel):
         self._state_dir = get_data_path() / "mochat"
         self._cursor_path = self._state_dir / "session_cursors.json"
         self._session_cursor: dict[str, int] = {}
-        self._cursor_save_task: asyncio.Task | None = None
+        self._cursor_save_task: asyncio.Task[None] | None = None
 
         self._session_set: set[str] = set()
         self._panel_set: set[str] = set()
@@ -244,9 +307,9 @@ class MochatChannel(BaseChannel):
         self._delay_states: dict[str, DelayState] = {}
 
         self._fallback_mode = False
-        self._session_fallback_tasks: dict[str, asyncio.Task] = {}
-        self._panel_fallback_tasks: dict[str, asyncio.Task] = {}
-        self._refresh_task: asyncio.Task | None = None
+        self._session_fallback_tasks: dict[str, asyncio.Task[None]] = {}
+        self._panel_fallback_tasks: dict[str, asyncio.Task[None]] = {}
+        self._refresh_task: asyncio.Task[None] | None = None
         self._target_locks: dict[str, asyncio.Lock] = {}
 
     # ---- lifecycle ---------------------------------------------------------
@@ -357,7 +420,7 @@ class MochatChannel(BaseChannel):
             else:
                 logger.warning("msgpack not installed but socket_disable_msgpack=false; using JSON")
 
-        client = socketio.AsyncClient(
+        client: _AsyncSocketIOClient = socketio.AsyncClient(
             reconnection=True,
             reconnection_attempts=self.config.max_retry_attempts or None,
             reconnection_delay=max(0.1, self.config.socket_reconnect_delay_ms / 1000.0),
@@ -418,7 +481,7 @@ class MochatChannel(BaseChannel):
             self._socket = None
             return False
 
-    def _build_notify_handler(self, event_name: str):
+    def _build_notify_handler(self, event_name: str) -> _AsyncHandler:
         async def handler(payload: Any) -> None:
             if event_name == "notify:chat.inbox.append":
                 await self._handle_notify_inbox_append(payload)

@@ -13,7 +13,7 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import parseaddr
-from typing import Any
+from typing import Any, Protocol, cast
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -21,6 +21,35 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import EmailConfig
 
 logger = logging.getLogger(__name__)
+
+
+class _EmailChannelConfig(Protocol):
+    """Adapter-specific view of ``EmailConfig``.
+
+    ``EmailConfig`` is a pydantic model with ``extra="allow"``, so the IMAP and
+    reply-policy settings below are not declared on the model even though the
+    adapter reads them.  Declaring the surface here keeps the reads typed.
+    """
+
+    consent_granted: bool
+    auto_reply_enabled: bool
+    poll_interval_seconds: float
+    subject_prefix: str
+    from_address: str
+    max_body_chars: int
+    mark_seen: bool
+    imap_host: str
+    imap_port: int
+    imap_username: str
+    imap_password: str
+    imap_mailbox: str
+    imap_use_ssl: bool
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_use_ssl: bool
+    smtp_use_tls: bool
 
 
 class EmailChannel(BaseChannel):
@@ -53,7 +82,7 @@ class EmailChannel(BaseChannel):
 
     def __init__(self, config: EmailConfig, bus: MessageBus):
         super().__init__(config, bus)
-        self.config: EmailConfig = config
+        self.config: _EmailChannelConfig = cast(_EmailChannelConfig, config)
         self._last_subject_by_chat: dict[str, str] = {}
         self._last_message_id_by_chat: dict[str, str] = {}
         self._processed_uids: set[str] = set()  # Capped to prevent unbounded growth
@@ -236,7 +265,7 @@ class EmailChannel(BaseChannel):
         mailbox = self.config.imap_mailbox or "INBOX"
 
         if self.config.imap_use_ssl:
-            client = imaplib.IMAP4_SSL(self.config.imap_host, self.config.imap_port)
+            client: imaplib.IMAP4 = imaplib.IMAP4_SSL(self.config.imap_host, self.config.imap_port)
         else:
             client = imaplib.IMAP4(self.config.imap_host, self.config.imap_port)
 

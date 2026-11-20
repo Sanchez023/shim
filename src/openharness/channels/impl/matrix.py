@@ -4,7 +4,8 @@ import asyncio
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any, TypeAlias
+from types import FrameType
+from typing import Any, Protocol, TypeAlias, cast
 
 try:
     import nh3
@@ -34,10 +35,10 @@ except ImportError as e:
         "Matrix dependencies not installed. Run: pip install nanobot-ai[matrix]"
     ) from e
 
-from openharness.config.loader import get_data_dir
-
 from openharness.channels.bus.events import OutboundMessage
+from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
+from openharness.config.paths import get_data_dir
 from openharness.utils.helpers import safe_filename
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,8 @@ MATRIX_HTML_CLEANER = nh3.Cleaner(
 def _render_markdown_html(text: str) -> str | None:
     """Render markdown to sanitized HTML; returns None for plain text."""
     try:
-        formatted = MATRIX_HTML_CLEANER.clean(MATRIX_MARKDOWN(text)).strip()
+        # ``nh3`` ships no typing, so ``clean`` is ``Any``; pin it to ``str``.
+        formatted: str = MATRIX_HTML_CLEANER.clean(MATRIX_MARKDOWN(text)).strip()
     except Exception:
         return None
     if not formatted:
@@ -121,18 +123,43 @@ def _build_matrix_text_content(text: str) -> dict[str, object]:
     return content
 
 
+class _LoguruLevel(Protocol):
+    """Level record returned by loguru's ``logger.level(name)``."""
+
+    name: str
+
+
+class _LoguruStyleLogger(Protocol):
+    """The loguru-shaped logging surface the matrix-nio bridge targets.
+
+    ``openharness`` logs through the stdlib, but this bridge is written against
+    loguru's ``level``/``opt``/``log`` API, which the stdlib logger lacks.
+    """
+
+    def level(self, name: str) -> _LoguruLevel: ...
+
+    def opt(self, *, depth: int, exception: Any = ...) -> "_LoguruStyleLogger": ...
+
+    def log(self, level: str | int, message: str) -> None: ...
+
+
+_nio_loguru_logger: _LoguruStyleLogger = cast(_LoguruStyleLogger, logger)
+
+
 class _NioLoguruHandler(logging.Handler):
     """Route matrix-nio stdlib logs into Loguru."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        level: str | int
         try:
-            level = logger.level(record.levelname).name
+            level = _nio_loguru_logger.level(record.levelname).name
         except ValueError:
             level = record.levelno
-        frame, depth = logging.currentframe(), 2
+        frame: FrameType | None = logging.currentframe()
+        depth = 2
         while frame and frame.f_code.co_filename == logging.__file__:
             frame, depth = frame.f_back, depth + 1
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+        _nio_loguru_logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def _configure_nio_logging_bridge() -> None:
@@ -148,12 +175,12 @@ class MatrixChannel(BaseChannel):
 
     name = "matrix"
 
-    def __init__(self, config: Any, bus, *, restrict_to_workspace: bool = False,
+    def __init__(self, config: Any, bus: MessageBus, *, restrict_to_workspace: bool = False,
                  workspace: Path | None = None):
         super().__init__(config, bus)
         self.client: AsyncClient | None = None
-        self._sync_task: asyncio.Task | None = None
-        self._typing_tasks: dict[str, asyncio.Task] = {}
+        self._sync_task: asyncio.Task[None] | None = None
+        self._typing_tasks: dict[str, asyncio.Task[None]] = {}
         self._restrict_to_workspace = restrict_to_workspace
         self._workspace = workspace.expanduser().resolve() if workspace else None
         self._server_upload_limit_bytes: int | None = None
@@ -381,14 +408,20 @@ class MatrixChannel(BaseChannel):
                 await self._stop_typing_keepalive(msg.chat_id, clear_typing=True)
 
     def _register_event_callbacks(self) -> None:
-        self.client.add_event_callback(self._on_message, RoomMessageText)
-        self.client.add_event_callback(self._on_media_message, MATRIX_MEDIA_EVENT_FILTER)
-        self.client.add_event_callback(self._on_room_invite, InviteEvent)
+        client = self.client
+        if client is None:  # pragma: no cover - start() creates the client first
+            return
+        client.add_event_callback(self._on_message, RoomMessageText)
+        client.add_event_callback(self._on_media_message, MATRIX_MEDIA_EVENT_FILTER)
+        client.add_event_callback(self._on_room_invite, InviteEvent)
 
     def _register_response_callbacks(self) -> None:
-        self.client.add_response_callback(self._on_sync_error, SyncError)
-        self.client.add_response_callback(self._on_join_error, JoinError)
-        self.client.add_response_callback(self._on_send_error, RoomSendError)
+        client = self.client
+        if client is None:  # pragma: no cover - start() creates the client first
+            return
+        client.add_response_callback(self._on_sync_error, SyncError)
+        client.add_response_callback(self._on_join_error, JoinError)
+        client.add_response_callback(self._on_send_error, RoomSendError)
 
     def _log_response_error(self, label: str, response: Any) -> None:
         """Log Matrix response errors — auth errors at ERROR level, rest at WARNING."""
@@ -448,7 +481,10 @@ class MatrixChannel(BaseChannel):
     async def _sync_loop(self) -> None:
         while self._running:
             try:
-                await self.client.sync_forever(timeout=30000, full_state=True)
+                client = self.client
+                if client is None:
+                    return
+                await client.sync_forever(timeout=30000, full_state=True)
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -456,7 +492,10 @@ class MatrixChannel(BaseChannel):
 
     async def _on_room_invite(self, room: MatrixRoom, event: InviteEvent) -> None:
         if self.is_allowed(event.sender):
-            await self.client.join(room.room_id)
+            client = self.client
+            if client is None:
+                return
+            await client.join(room.room_id)
 
     def _is_direct_room(self, room: MatrixRoom) -> bool:
         count = getattr(room, "member_count", None)
@@ -533,6 +572,8 @@ class MatrixChannel(BaseChannel):
 
     def _event_attachment_type(self, event: MatrixMediaEvent) -> str:
         msgtype = self._event_source_content(event).get("msgtype")
+        if not isinstance(msgtype, str):
+            return "file"
         return _MSGTYPE_MAP.get(msgtype, "file")
 
     @staticmethod
@@ -555,18 +596,20 @@ class MatrixChannel(BaseChannel):
 
     def _event_filename(self, event: MatrixMediaEvent, attachment_type: str) -> str:
         body = getattr(event, "body", None)
-        if isinstance(body, str) and body.strip():
-            if candidate := safe_filename(Path(body).name):
-                return candidate
+        if (
+            isinstance(body, str)
+            and body.strip()
+            and (candidate := safe_filename(Path(body).name))
+        ):
+            return candidate
         return _DEFAULT_ATTACH_NAME if attachment_type == "file" else attachment_type
 
     def _build_attachment_path(self, event: MatrixMediaEvent, attachment_type: str,
                                filename: str, mime: str | None) -> Path:
         safe_name = safe_filename(Path(filename).name) or _DEFAULT_ATTACH_NAME
         suffix = Path(safe_name).suffix
-        if not suffix and mime:
-            if guessed := mimetypes.guess_extension(mime, strict=False):
-                safe_name, suffix = f"{safe_name}{guessed}", guessed
+        if not suffix and mime and (guessed := mimetypes.guess_extension(mime, strict=False)):
+            safe_name, suffix = f"{safe_name}{guessed}", guessed
         stem = (Path(safe_name).stem or attachment_type)[:72]
         suffix = suffix[:16]
         event_id = safe_filename(str(getattr(event, "event_id", "") or "evt").lstrip("$"))
@@ -601,7 +644,9 @@ class MatrixChannel(BaseChannel):
         if not all(isinstance(v, str) for v in (key, sha256, iv)):
             return None
         try:
-            return decrypt_attachment(ciphertext, key, sha256, iv)
+            # ``nio`` ships no typing, so ``decrypt_attachment`` is ``Any``.
+            plaintext: bytes = decrypt_attachment(ciphertext, key, sha256, iv)
+            return plaintext
         except (EncryptionError, ValueError, TypeError):
             logger.warning("Matrix decrypt failed for event %s", getattr(event, "event_id", ""))
             return None
@@ -631,8 +676,10 @@ class MatrixChannel(BaseChannel):
         encrypted = self._is_encrypted_media_event(event)
         data = downloaded
         if encrypted:
-            if (data := self._decrypt_media_bytes(event, downloaded)) is None:
+            decrypted = self._decrypt_media_bytes(event, downloaded)
+            if decrypted is None:
                 return None, fail
+            data = decrypted
 
         if len(data) > limit_bytes:
             return None, _ATTACH_TOO_LARGE.format(filename)

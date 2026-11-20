@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from typing import Protocol, cast
 
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
@@ -18,6 +19,51 @@ from openharness.config.schema import SlackConfig
 logger = logging.getLogger(__name__)
 
 
+class _SlackDmConfig(Protocol):
+    """Direct-message policy block of ``channels.slack.dm``."""
+
+    enabled: bool
+    policy: str
+    allow_from: list[str]
+
+
+class _SlackChannelConfig(Protocol):
+    """Adapter-specific view of ``SlackConfig``.
+
+    ``SlackConfig`` is a pydantic model with ``extra="allow"``, so the Socket
+    Mode and reply-policy settings below are undeclared on the model even
+    though the adapter reads them.  Declaring the surface here keeps the reads
+    typed.
+    """
+
+    bot_token: str
+    app_token: str
+    mode: str
+    reply_in_thread: bool
+    react_emoji: str
+    group_policy: str
+    group_allow_from: list[str]
+    dm: _SlackDmConfig
+
+
+class _AsyncSocketModeClient(Protocol):
+    """The slice of ``AsyncBaseSocketModeClient`` the request listener needs."""
+
+    async def send_socket_mode_response(self, response: SocketModeResponse) -> None: ...
+
+
+class _AsyncSocketModeConnection(Protocol):
+    """Awaitable connection surface of ``slack_sdk.socket_mode.websockets``.
+
+    The SDK implementation of ``SocketModeClient`` omits return annotations for
+    ``connect``/``close``, which strict mode reports as untyped calls.
+    """
+
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+
 class SlackChannel(BaseChannel):
     """Slack channel using Socket Mode."""
 
@@ -25,7 +71,7 @@ class SlackChannel(BaseChannel):
 
     def __init__(self, config: SlackConfig, bus: MessageBus):
         super().__init__(config, bus)
-        self.config: SlackConfig = config
+        self.config: _SlackChannelConfig = cast(_SlackChannelConfig, config)
         self._web_client: AsyncWebClient | None = None
         self._socket_client: SocketModeClient | None = None
         self._bot_user_id: str | None = None
@@ -58,7 +104,7 @@ class SlackChannel(BaseChannel):
             logger.warning("Slack auth_test failed: %s", e)
 
         logger.info("Starting Slack Socket Mode client...")
-        await self._socket_client.connect()
+        await cast(_AsyncSocketModeConnection, self._socket_client).connect()
 
         while self._running:
             await asyncio.sleep(1)
@@ -68,7 +114,7 @@ class SlackChannel(BaseChannel):
         self._running = False
         if self._socket_client:
             try:
-                await self._socket_client.close()
+                await cast(_AsyncSocketModeConnection, self._socket_client).close()
             except Exception as e:
                 logger.warning("Slack socket close failed: %s", e)
             self._socket_client = None
@@ -107,7 +153,7 @@ class SlackChannel(BaseChannel):
 
     async def _on_socket_request(
         self,
-        client: SocketModeClient,
+        client: _AsyncSocketModeClient,
         req: SocketModeRequest,
     ) -> None:
         """Handle incoming Socket Mode requests."""
@@ -169,12 +215,13 @@ class SlackChannel(BaseChannel):
         if self.config.reply_in_thread and not thread_ts:
             thread_ts = event.get("ts")
         # Add :eyes: reaction to the triggering message (best-effort)
+        event_ts = event.get("ts")
         try:
-            if self._web_client and event.get("ts"):
+            if self._web_client and isinstance(event_ts, str) and event_ts:
                 await self._web_client.reactions_add(
                     channel=chat_id,
                     name=self.config.react_emoji,
-                    timestamp=event.get("ts"),
+                    timestamp=event_ts,
                 )
         except Exception as e:
             logger.debug("Slack reactions_add failed: %s", e)
@@ -252,7 +299,7 @@ class SlackChannel(BaseChannel):
         """Fix markdown artifacts that slackify_markdown misses."""
         code_blocks: list[str] = []
 
-        def _save_code(m: re.Match) -> str:
+        def _save_code(m: re.Match[str]) -> str:
             code_blocks.append(m.group(0))
             return f"\x00CB{len(code_blocks) - 1}\x00"
 
@@ -267,7 +314,7 @@ class SlackChannel(BaseChannel):
         return text
 
     @staticmethod
-    def _convert_table(match: re.Match) -> str:
+    def _convert_table(match: re.Match[str]) -> str:
         """Convert a Markdown table to a Slack-readable list."""
         lines = [ln.strip() for ln in match.group(0).strip().splitlines() if ln.strip()]
         if len(lines) < 2:

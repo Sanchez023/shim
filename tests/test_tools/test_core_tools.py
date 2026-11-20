@@ -40,6 +40,10 @@ async def test_file_write_read_and_edit(tmp_path: Path):
     )
     assert write_result.is_error is False
     assert (tmp_path / "notes.txt").exists()
+    # The terminal renders this unified diff under the tool row.
+    assert write_result.metadata["diff_added"] == 3
+    assert write_result.metadata["diff_removed"] == 0
+    assert "+one" in write_result.metadata["diff"]
 
     read_result = await FileReadTool().execute(
         FileReadToolInput(path="notes.txt", offset=1, limit=2),
@@ -54,6 +58,10 @@ async def test_file_write_read_and_edit(tmp_path: Path):
     )
     assert edit_result.is_error is False
     assert "TWO" in (tmp_path / "notes.txt").read_text(encoding="utf-8")
+    assert edit_result.metadata["diff_added"] == 1
+    assert edit_result.metadata["diff_removed"] == 1
+    assert "-two" in edit_result.metadata["diff"]
+    assert "+TWO" in edit_result.metadata["diff"]
 
 
 @pytest.mark.asyncio

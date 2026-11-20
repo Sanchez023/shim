@@ -48,6 +48,37 @@ class StaticApiClient:
         )
 
 
+class ToolThenAnswerApiClient:
+    """First step reads a file, second step answers."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self.calls = 0
+
+    async def stream_message(self, request):
+        del request
+        self.calls += 1
+        if self.calls == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(id="toolu_read", name="read_file", input={"path": self._path})
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=200_000, output_tokens=10),
+                stop_reason="tool_use",
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(
+                role="assistant", content=[TextBlock(text="finished")]
+            ),
+            usage=UsageSnapshot(input_tokens=200_000, output_tokens=10),
+            stop_reason="end_turn",
+        )
+
+
 class ThinkingApiClient:
     """Fake client that streams reasoning before the answer."""
 
@@ -418,6 +449,146 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_status_snapshot_reflects_tool_results_before_the_next_model_turn(
+    tmp_path, monkeypatch
+):
+    """The ctx meter must move when a tool result joins the history.
+
+    A running turn keeps its messages in a working list, so snapshots built
+    from ``engine.messages`` used to ignore the tool result until the turn
+    committed.  The UI then showed a stale value for the whole next model
+    round-trip (all streaming and thinking time).
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    notes = tmp_path / "notes.txt"
+    notes.write_text("alpha bravo charlie delta " * 1200, encoding="utf-8")
+
+    client = ToolThenAnswerApiClient(str(notes))
+    host = ReactBackendHost(
+        BackendHostConfig(api_client=client, permission_mode="full_auto")
+    )
+    host._bundle = await build_runtime(
+        api_client=client,
+        permission_mode="full_auto",
+    )
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("read the notes")
+    finally:
+        await close_runtime(host._bundle)
+
+    def context_tokens(index: int) -> int:
+        return int((events[index].state or {}).get("context_tokens") or 0)
+
+    tool_index = next(
+        index for index, event in enumerate(events) if event.type == "tool_completed"
+    )
+    answer_index = next(
+        index
+        for index, event in enumerate(events)
+        if index > tool_index and event.type == "assistant_complete"
+    )
+    refreshes = [
+        index
+        for index, event in enumerate(events)
+        if tool_index < index < answer_index and event.type == "state_snapshot"
+    ]
+    assert refreshes, "expected a ctx refresh after the tool result was appended"
+
+    before = max(
+        (
+            context_tokens(index)
+            for index, event in enumerate(events)
+            if index < tool_index and event.type == "state_snapshot"
+        ),
+        default=0,
+    )
+    # The refresh that matters is the one once the result is in the history,
+    # not the pre-append snapshot emitted alongside tool_completed.
+    assert context_tokens(refreshes[-1]) > before + 500
+
+
+@pytest.mark.asyncio
+async def test_tool_completed_carries_the_edit_diff_metadata(tmp_path, monkeypatch):
+    """The TUI renders the edit diff from the tool result, not by re-reading files."""
+
+    class _WriteClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def stream_message(self, request):
+            del request
+            self.calls += 1
+            if self.calls == 1:
+                yield ApiMessageCompleteEvent(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_write",
+                                name="write_file",
+                                input={"path": "out.txt", "content": "alpha\nbeta\n"},
+                            )
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                    stop_reason="tool_use",
+                )
+                return
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(
+                    role="assistant", content=[TextBlock(text="done")]
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                stop_reason="end_turn",
+            )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = _WriteClient()
+    host = ReactBackendHost(
+        BackendHostConfig(api_client=client, permission_mode="full_auto")
+    )
+    host._bundle = await build_runtime(
+        api_client=client,
+        permission_mode="full_auto",
+        cwd=str(tmp_path),
+    )
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._process_line("write the file")
+    finally:
+        await close_runtime(host._bundle)
+
+    completed = next(
+        event
+        for event in events
+        if event.type == "tool_completed" and event.tool_name == "write_file"
+    )
+    assert completed.item is not None
+    assert completed.item.metadata is not None
+    assert completed.item.metadata["diff_added"] == 2
+    assert completed.item.metadata["diff_removed"] == 0
+    assert "+alpha" in completed.item.metadata["diff"]
 
 
 @pytest.mark.asyncio

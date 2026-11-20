@@ -102,13 +102,15 @@ function view(): React.JSX.Element {
 	);
 }
 
-test('every collapsed tool output points at the transcript viewer', async () => {
+test('completed bash calls preview their output inline', async () => {
 	const output = await renderOutput(view());
 
-	assert.equal((output.match(/ctrl\+o to expand/g) ?? []).length, 2);
+	assert.match(output, /Bash\(ls\)/);
+	assert.match(output, /Bash\(pwd\)/);
+	assert.match(output, /first-result/);
+	assert.match(output, /second-result/);
 	assert.doesNotMatch(output, /click to expand/);
-	assert.doesNotMatch(output, /first-result/);
-	assert.doesNotMatch(output, /second-result/);
+	assert.doesNotMatch(output, /ctrl\+o to expand/);
 });
 
 test('live thinking streams in a dim block above the answer', async () => {
@@ -228,7 +230,9 @@ test('a finished answer is printed in full instead of being folded', async () =>
 	assert.doesNotMatch(output, /more lines/);
 });
 
-test('the live frame still folds a tall message', async () => {
+test('the live frame keeps the tail of a tall answer', async () => {
+	// The conclusion is what the user just waited for.  A head clamp hid it
+	// behind "… N more lines" and made the final round look partially folded.
 	const items: TranscriptItem[] = [
 		{role: 'assistant', text: Array.from({length: 60}, (_, index) => `live-line-${index}`).join('\n')},
 	];
@@ -245,8 +249,9 @@ test('the live frame still folds a tall message', async () => {
 		</Box>,
 	);
 
-	assert.match(output, /live-line-0/);
-	assert.match(output, /more lines · ctrl\+o full transcript/);
+	assert.match(output, /live-line-59/);
+	assert.doesNotMatch(output, /live-line-0\b/);
+	assert.match(output, /earlier lines · ctrl\+o full transcript/);
 });
 
 test('staticBoundary flushes the tail once a turn finishes', () => {

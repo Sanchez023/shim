@@ -203,7 +203,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredThinkingBuffer = useDeferredValue(session.thinkingBuffer);
-	const deferredStatus = useDeferredValue(session.status);
 	const deferredTasks = useDeferredValue(session.tasks);
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
@@ -224,7 +223,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		Math.max(0, selectVisibleOptions.length - 1),
 	);
 	const {rows: terminalRows, columns: terminalColumns} = useTerminalSize();
-	const planMode = String(deferredStatus.permission_mode ?? '').toLowerCase().includes('plan');
+	const planMode = String(session.status.permission_mode ?? '').toLowerCase().includes('plan');
 	const sidebarWidth = Math.min(40, Math.max(28, Math.floor(terminalColumns * 0.3)));
 	// The checklist belongs in the sidebar whenever there is room. Previously
 	// it only rendered there in plan mode, so exiting plan mode dropped a tall
@@ -1532,7 +1531,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			{/* Status bar sits below the input so it never collides with it */}
 			{session.ready ? (
 				<StatusBar
-					status={deferredStatus}
+					status={session.status}
 					tasks={deferredTasks}
 					activeToolName={session.busy ? currentToolName : undefined}
 					queuedCount={queuedMessages.length}

@@ -87,6 +87,29 @@ test('transcript lines keep full tool results and the streaming buffer', () => {
 	assert.equal(lines.find((line) => line.text === 'result-1')?.kind, 'result');
 });
 
+test('transcript lines carry the line diff for an applied edit only', () => {
+	const toolItem: TranscriptItem = {
+		role: 'tool',
+		text: 'edit_file',
+		tool_name: 'edit_file',
+		tool_input: {path: 'a.ts', old_str: 'alpha\nbeta', new_str: 'alpha\ngamma'},
+	};
+
+	const applied = buildTranscriptLines([
+		toolItem,
+		{role: 'tool_result', text: 'Updated a.ts', is_error: false},
+	]);
+	assert.equal(applied.find((line) => line.text === '-beta')?.kind, 'diff_del');
+	assert.equal(applied.find((line) => line.text === '+gamma')?.kind, 'diff_add');
+	assert.equal(applied.find((line) => line.text === ' alpha')?.kind, 'diff_context');
+
+	const rejected = buildTranscriptLines([
+		toolItem,
+		{role: 'tool_result', text: 'old_str was not found', is_error: true},
+	]);
+	assert.ok(!rejected.some((line) => line.text === '+gamma'));
+});
+
 test('viewport anchors to the bottom by default and can scroll to the top', async () => {
 	const lines: TranscriptLine[] = Array.from({length: 20}, (_, index) => ({
 		text: `line-${index + 1}`,

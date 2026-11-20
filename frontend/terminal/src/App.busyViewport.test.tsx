@@ -164,6 +164,78 @@ const script = [
 	'});',
 ].join('\n');
 
+const completedAnswerScript = [
+	"const emit = (event) => console.log('OHJSON:' + JSON.stringify(event));",
+	"emit({type: 'ready', state: {model: 'test-model'}, commands: [], command_descriptions: {}});",
+	"for (let i = 1; i <= 6; i += 1) {",
+	"  emit({type: 'transcript_item', item: {role: i % 2 ? 'user' : 'assistant', text: 'HIST-' + i}});",
+	'}',
+	'process.stdin.resume();',
+	"let buf = '';",
+	"process.stdin.on('data', (chunk) => {",
+	'  buf += chunk.toString();',
+	'  let idx;',
+	"  while ((idx = buf.indexOf('\\n')) >= 0) {",
+	'    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);',
+	'    if (!line.trim()) continue;',
+	'    let msg;',
+	'    try { msg = JSON.parse(line); } catch { continue; }',
+	"    if (msg.type !== 'submit_line') continue;",
+	`    const answer = ${JSON.stringify(answerLines.join('\n'))};`,
+	"    emit({type: 'assistant_delta', message: answer});",
+	"    emit({type: 'assistant_complete', message: answer});",
+	"    emit({type: 'line_complete'});",
+	'  }',
+	'});',
+].join('\n');
+
+test('a finished answer keeps its tail instead of folding the conclusion away', async () => {
+	const columns = 70;
+	const rows = 24;
+	const stdin = createTestStdin();
+	const stdout = createTestStdout(columns, rows);
+	const screen = new Screen();
+	stdout.on('data', (chunk) => {
+		screen.write(chunk.toString());
+	});
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', completedAnswerScript]}} />,
+		{
+			stdin: stdin as unknown as NodeJS.ReadStream & {fd: 0},
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			exitOnCtrlC: false,
+			debug: false,
+			patchConsole: false,
+		},
+	);
+	const exitPromise = instance.waitUntilExit();
+	try {
+		await waitFor(screen, rows, (view) => view.includes('test-model'));
+		for (const char of 'go') {
+			stdin.write(char);
+		}
+		await settle();
+		stdin.write('\r');
+		const view = await waitFor(screen, rows, (value) => value.includes('LINE-40'));
+		await settle();
+
+		// Once the turn completes the transcript item replaces the streaming
+		// buffer; it must keep the same tail alignment instead of flipping to a
+		// head clamp that hides the conclusion behind "… N more lines".
+		assert.match(view, /LINE-40/, `the finished answer's conclusion should stay visible:\n${view}`);
+		assert.match(view, /earlier lines/, 'the folded head needs a hint');
+		assert.doesNotMatch(view, /\d+ more lines/, 'the conclusion must not be folded away');
+		assert.doesNotMatch(view, /LINE-01/, 'the head of a long answer should not crowd out its tail');
+	} finally {
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+		stdin.destroy();
+		stdout.destroy();
+	}
+});
+
 test('a streaming answer keeps its tail and leaves room for the conversation', async () => {
 	// 70 columns keeps the checklist inline (below the conversation) and 24 rows
 	// is the small window where the live answer used to eat the whole frame.

@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.diff_metadata import MAX_DIFF_SOURCE_CHARS, diff_metadata
 from openharness.utils.fs import write_text_preserving_newlines
 
 
@@ -56,17 +57,28 @@ class FileEditTool(BaseTool):
             updated = original.replace(arguments.old_str, arguments.new_str, 1)
 
         approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-        if approval_prompt is not None:
+        # Computed even when there is no approval prompt: the terminal renders
+        # the same unified diff under the tool row.  A huge file is skipped
+        # unless the approval modal needs it; the UI then diffs the snippets.
+        if (
+            approval_prompt is not None
+            or len(original) + len(updated) <= MAX_DIFF_SOURCE_CHARS
+        ):
             diff_text, added, removed = _compute_diff(str(path), original, updated)
+        else:
+            diff_text, added, removed = "", 0, 0
+        metadata = diff_metadata(diff_text, added, removed)
+
+        if approval_prompt is not None:
             reply = await approval_prompt(str(path), diff_text, added, removed)
             if reply == "reject":
                 return ToolResult(output=f"Edit rejected by user: {path}", is_error=True)
             write_text_preserving_newlines(path, updated)
             stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-            return ToolResult(output=f"Updated {path}{stats}")
+            return ToolResult(output=f"Updated {path}{stats}", metadata=metadata)
 
         write_text_preserving_newlines(path, updated)
-        return ToolResult(output=f"Updated {path}")
+        return ToolResult(output=f"Updated {path}", metadata=metadata)
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:

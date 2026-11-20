@@ -265,3 +265,57 @@ test('oversized command output opens a closable, scrollable view', async () => {
 		stdout.destroy();
 	}
 });
+
+const editDiffBackendScript = [
+	"const emit = (event) => console.log('OHJSON:' + JSON.stringify(event));",
+	"emit({type: 'ready', state: {model: 'test-model'}, commands: [], command_descriptions: {}});",
+	"const oldText = Array.from({length: 12}, (_, i) => 'old-' + i).join('\\n');",
+	"const newText = Array.from({length: 12}, (_, i) => 'new-' + i).join('\\n');",
+	"const input = {path: 'src/app.ts', old_str: oldText, new_str: newText};",
+	'setTimeout(() => {',
+	"  emit({type: 'tool_started', tool_name: 'edit_file', tool_use_id: 't1', tool_input: input, item: {role: 'tool', text: 'edit_file', tool_name: 'edit_file', tool_use_id: 't1', tool_input: input}});",
+	"  emit({type: 'tool_completed', tool_name: 'edit_file', tool_use_id: 't1', item: {role: 'tool_result', text: 'Updated src/app.ts', tool_name: 'edit_file', tool_use_id: 't1', is_error: false}});",
+	'}, 100);',
+	'process.stdin.resume();',
+].join('\n');
+
+test('an applied edit keeps its diff in the frame and the whole diff in the viewer', async () => {
+	const stdin = createTestStdin();
+	const stdout = createTestStdout();
+	const writes: string[] = [];
+	stdout.on('data', (chunk) => {
+		writes.push(chunk.toString());
+	});
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', editDiffBackendScript]}} />,
+		{
+			stdin: stdin as unknown as NodeJS.ReadStream & {fd: 0},
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			exitOnCtrlC: false,
+			debug: true,
+			patchConsole: false,
+		},
+	);
+	const exitPromise = instance.waitUntilExit();
+	try {
+		const frame = await waitForFrame(writes, (value) => value.includes('Updated src/app.ts'));
+		// The live preview keeps the head and the tail of the change.
+		assert.match(frame, /-old-0/);
+		assert.match(frame, /\+new-11/);
+		assert.match(frame, /more diff lines · ctrl\+o full transcript/);
+		// A row from the middle of the change is folded away inline...
+		assert.doesNotMatch(frame, /\+new-4/);
+
+		// ...and the viewer is where the complete diff lives.
+		stdin.write('\u000f');
+		const viewer = await waitForFrame(writes, (value) => value.includes('↑/↓ scroll'));
+		assert.match(viewer, /\+new-4/);
+	} finally {
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+		stdin.destroy();
+		stdout.destroy();
+	}
+});

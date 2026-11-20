@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.tools.diff_metadata import MAX_DIFF_SOURCE_CHARS, diff_metadata
 from openharness.utils.fs import write_text_preserving_newlines
 
 
@@ -42,10 +43,26 @@ class FileWriteTool(BaseTool):
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
-        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-        if approval_prompt is not None:
+        try:
             original = path.read_text(encoding="utf-8") if path.exists() else ""
-            diff_text, added, removed = _compute_diff(str(path), original, arguments.content)
+        except OSError:
+            # The write can still proceed; the diff simply starts from scratch.
+            original = ""
+        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
+        # The terminal renders the unified diff under the tool row, so compute
+        # it even when there is no approval prompt.  Skip pathologically large
+        # sources unless the approval modal needs them.
+        if (
+            approval_prompt is not None
+            or len(original) + len(arguments.content) <= MAX_DIFF_SOURCE_CHARS
+        ):
+            diff_text, added, removed = _compute_diff(
+                str(path), original, arguments.content
+            )
+        else:
+            diff_text, added, removed = "", 0, 0
+        metadata = diff_metadata(diff_text, added, removed)
+        if approval_prompt is not None:
             reply = await approval_prompt(str(path), diff_text, added, removed)
             if reply == "reject":
                 return ToolResult(output=f"Write rejected by user: {path}", is_error=True)
@@ -53,12 +70,12 @@ class FileWriteTool(BaseTool):
                 path.parent.mkdir(parents=True, exist_ok=True)
             write_text_preserving_newlines(path, arguments.content)
             stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-            return ToolResult(output=f"Wrote {path}{stats}")
+            return ToolResult(output=f"Wrote {path}{stats}", metadata=metadata)
 
         if arguments.create_directories:
             path.parent.mkdir(parents=True, exist_ok=True)
         write_text_preserving_newlines(path, arguments.content)
-        return ToolResult(output=f"Wrote {path}")
+        return ToolResult(output=f"Wrote {path}", metadata=metadata)
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:

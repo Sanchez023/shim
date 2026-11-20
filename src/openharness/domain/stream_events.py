@@ -71,6 +71,18 @@ class StatusEvent:
 
 
 @dataclass(frozen=True)
+class ContextChangedEvent:
+    """The model-visible conversation history changed.
+
+    Emitted right after the engine appends a message (a user prompt or a
+    batch of tool results), before the next model request.  UIs that estimate
+    context occupancy from the message list should refresh their meter here
+    instead of waiting for the next ``AssistantTurnComplete``, which can be a
+    whole model round-trip later.
+    """
+
+
+@dataclass(frozen=True)
 class CompactProgressEvent:
     """Structured progress event for conversation compaction."""
 
@@ -100,5 +112,6 @@ StreamEvent = (
     | ToolExecutionCompleted
     | ErrorEvent
     | StatusEvent
+    | ContextChangedEvent
     | CompactProgressEvent
 )

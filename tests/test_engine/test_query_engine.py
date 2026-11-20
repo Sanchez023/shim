@@ -33,6 +33,7 @@ from openharness.engine.stream_events import (
     AssistantThinkingDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    ContextChangedEvent,
     ErrorEvent,
     StatusEvent,
     ToolExecutionCompleted,
@@ -251,8 +252,11 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
 
     events = [event async for event in engine.submit_message("hello")]
 
-    assert isinstance(events[0], AssistantTextDelta)
-    assert events[0].text == "Hello from the model."
+    # The turn announces that the user prompt joined the history before the
+    # model produces any content, so context meters can refresh immediately.
+    assert isinstance(events[0], ContextChangedEvent)
+    assert isinstance(events[1], AssistantTextDelta)
+    assert events[1].text == "Hello from the model."
     assert isinstance(events[-1], AssistantTurnComplete)
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
@@ -1642,6 +1646,74 @@ async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tm
 
     assert isinstance(events[-1], AssistantTurnComplete)
     assert events[-1].message.text == "Recovered from the failure."
+
+
+@pytest.mark.asyncio
+async def test_context_changed_fires_when_history_grows(tmp_path: Path):
+    """A UI can refresh its context meter before the next slow model call.
+
+    The engine keeps a turn's messages in a working list and only copies them
+    into the session at the end, so the plain ``messages`` view is a turn
+    behind.  ``working_messages`` exposes the live list and
+    ``ContextChangedEvent`` marks the two points where it grows: the user
+    prompt and the tool-result batch.
+    """
+    registry = ToolRegistry()
+    registry.register(_OkTool())
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[ToolUseBlock(id="toolu_ctx", name="ok_tool", input={})],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="done")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    snapshots: list[tuple[object, list[ConversationMessage]]] = []
+    async for event in engine.submit_message("go"):
+        snapshots.append((event, list(engine.working_messages)))
+
+    changed = [
+        (index, messages)
+        for index, (event, messages) in enumerate(snapshots)
+        if isinstance(event, ContextChangedEvent)
+    ]
+    assert changed, "expected at least one ContextChangedEvent"
+
+    first_index, first_messages = changed[0]
+    assert first_index == 0
+    assert any(
+        message.role == "user" and message.text == "go"
+        for message in first_messages
+    )
+
+    tool_result_snapshot = next(
+        messages
+        for _, messages in changed
+        if any(isinstance(block, ToolResultBlock) for block in messages[-1].content)
+    )
+    assert {
+        block.tool_use_id
+        for block in tool_result_snapshot[-1].content
+        if isinstance(block, ToolResultBlock)
+    } == {"toolu_ctx"}
 
 
 @pytest.mark.asyncio

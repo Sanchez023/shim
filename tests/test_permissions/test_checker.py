@@ -231,6 +231,51 @@ class TestSensitivePathProtection:
             decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
             assert decision.allowed is True, f"Expected {path} to be allowed"
 
+    def test_harness_data_that_is_not_credentials_is_readable(self):
+        """The whole ~/.openharness tree is not a credential store.
+
+        Skills, plugins, themes and the harness's own tool artifacts are data
+        the agent is expected to read.  Blocking them made ``ls
+        ~/.openharness/skills`` and reading an offloaded tool artifact fail
+        even though ``read_file`` could read the same file.
+        """
+        checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
+        for path in (
+            "/home/user/.openharness/skills/harness-eval/SKILL.md",
+            "/home/user/.openharness/plugins/tavily-search/plugin.json",
+            "/home/user/.openharness/themes/cyberpunk.json",
+            "/home/user/.openharness/data/tool_artifacts/20261120-132731-agent-abc.txt",
+        ):
+            decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
+            assert decision.allowed is True, f"Expected {path} to be allowed"
+            decision = checker.evaluate(
+                "bash",
+                is_read_only=False,
+                command=f"cat {path}",
+                paths=(path,),
+            )
+            assert decision.allowed is True, f"Expected bash path {path} to be allowed"
+
+    def test_narrowed_harness_sensitive_stores_still_blocked(self):
+        """Session data, pastes, logs and settings backups stay protected."""
+        checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
+        for path in (
+            "/home/user/.openharness/data/sessions/proj/abc.events.jsonl",
+            "/home/user/.openharness/sessions/legacy.json",
+            "/home/user/.openharness/data/user_pastes/paste.txt",
+            "/home/user/.openharness/logs/gateway.log",
+            "/home/user/.openharness/settings.json.bak-20261119-164028",
+        ):
+            decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
+            assert decision.allowed is False, f"Expected {path} to be denied"
+            decision = checker.evaluate(
+                "bash",
+                is_read_only=False,
+                command=f"cat {path}",
+                paths=(path,),
+            )
+            assert decision.allowed is False, f"Expected bash path {path} to be denied"
+
     def test_no_file_path_skips_sensitive_check(self):
         """Tools without a file path (e.g. bash) are not affected."""
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
@@ -290,8 +335,11 @@ class TestSensitivePathProtection:
             "*/.kube/config": "/home/u/.kube/config",
             "*/.openharness/credentials.json": "/home/u/.openharness/credentials.json",
             "*/.openharness/copilot_auth.json": "/home/u/.openharness/copilot_auth.json",
-            "*/.openharness/settings.json": "/home/u/.openharness/settings.json",
+            "*/.openharness/settings.json*": "/home/u/.openharness/settings.json.bak-20261119",
             "*/.openharness/sessions/*": "/home/u/.openharness/sessions/abc.json",
+            "*/.openharness/data/sessions/*": "/home/u/.openharness/data/sessions/p/abc.json",
+            "*/.openharness/data/user_pastes/*": "/home/u/.openharness/data/user_pastes/p.txt",
+            "*/.openharness/logs/*": "/home/u/.openharness/logs/gateway.log",
             "*/.netrc": "/home/u/.netrc",
             "*/.pypirc": "/home/u/.pypirc",
             "*/.npmrc": "/home/u/.npmrc",

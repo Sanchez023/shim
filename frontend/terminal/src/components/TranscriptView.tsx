@@ -3,7 +3,7 @@ import {Box, Text} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
-import {summarizeToolInput} from './ToolCallDisplay.js';
+import {buildEditPreview, buildToolDiffPreview, summarizeToolInput} from './ToolCallDisplay.js';
 
 export type TranscriptLineKind =
 	| 'user'
@@ -12,6 +12,9 @@ export type TranscriptLineKind =
 	| 'tool'
 	| 'result'
 	| 'error'
+	| 'diff_add'
+	| 'diff_del'
+	| 'diff_context'
 	| 'system'
 	| 'status'
 	| 'log';
@@ -42,7 +45,8 @@ export function buildTranscriptLines(
 ): TranscriptLine[] {
 	const lines: TranscriptLine[] = [];
 
-	for (const item of items) {
+	for (let index = 0; index < items.length; index += 1) {
+		const item = items[index];
 		switch (item.role) {
 			case 'user':
 				pushText(lines, `> ${item.text}`, 'user');
@@ -59,6 +63,36 @@ export function buildTranscriptLines(
 					.replace(/\s+/g, ' ')
 					.trim();
 				pushText(lines, `⏺ ${toolName}${summary ? ` ${summary}` : ''}`, 'tool');
+				// The full transcript is where the complete edit diff belongs.
+				// Skip it when the following result reports a failure, since the
+				// diff was not applied.
+				const next = items[index + 1];
+				const result = next?.role === 'tool_result' ? next : undefined;
+				if (!result || !result.is_error) {
+					const preview = result
+						? buildEditPreview(toolName, item.tool_input, result, 1_000)
+						: buildToolDiffPreview(toolName, item.tool_input, 1_000);
+					if (preview) {
+						for (const row of preview.rows) {
+							const prefix = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' ';
+							lines.push({
+								text: `${prefix}${row.text}`,
+								kind:
+									row.kind === 'add'
+										? 'diff_add'
+										: row.kind === 'del'
+											? 'diff_del'
+											: 'diff_context',
+							});
+						}
+						if (preview.hidden > 0) {
+							lines.push({
+								text: `… ${preview.hidden} more diff lines`,
+								kind: 'log',
+							});
+						}
+					}
+				}
 				break;
 			}
 			case 'tool_result': {
@@ -99,6 +133,9 @@ const KIND_COLORS: Record<TranscriptLineKind, 'primary' | 'secondary' | 'accent'
 	tool: 'accent',
 	result: 'info',
 	error: 'error',
+	diff_add: 'success',
+	diff_del: 'error',
+	diff_context: 'info',
 	system: 'warning',
 	status: 'info',
 	log: 'info',
@@ -134,7 +171,12 @@ export function TranscriptView({
 				<Text
 					key={start + index}
 					color={theme.colors[KIND_COLORS[line.kind]]}
-					dimColor={line.kind === 'result' || line.kind === 'log' || line.kind === 'thinking'}
+					dimColor={
+						line.kind === 'result' ||
+						line.kind === 'log' ||
+						line.kind === 'thinking' ||
+						line.kind === 'diff_context'
+					}
 					wrap="truncate"
 				>
 					{line.text || ' '}

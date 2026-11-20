@@ -42,7 +42,15 @@ _SENSITIVE_ROOTS: tuple[str, ...] = (
     "~/.gnupg",
     "~/.docker",
     "~/.kube",
-    "~/.openharness",
+    # Only the credential-bearing parts of the harness data dir are trees.
+    # Session transcripts, raw user pastes and logs can contain whatever the
+    # session saw.  The rest of ~/.openharness (skills, plugins, themes, tool
+    # artifacts) is harness data the agent is expected to read; the actual key
+    # files under it are covered by SENSITIVE_PATH_PATTERNS.
+    "~/.openharness/sessions",
+    "~/.openharness/data/sessions",
+    "~/.openharness/data/user_pastes",
+    "~/.openharness/logs",
 )
 
 # Commands that only read.  Commands with any possibility of writing or of

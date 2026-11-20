@@ -23,6 +23,10 @@ repository cannot be attributed reliably either; that gap is intentional.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
+import sys
+import tempfile
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,7 +72,18 @@ async def ensure_baseline(
     state = _state(metadata)
     if state is None or state.get("baseline") is not None or state.get("skipped"):
         return
-    snapshot = await _snapshot(cwd)
+    # Parallel tool calls reach this point at the same moment.  Spawning
+    # several git processes at once is what deadlocked Git for Windows in the
+    # field (two `worktree list` probes wedged before doing any I/O), and the
+    # baseline only needs to be captured once, so let the first caller probe
+    # and the others move on.
+    if state.get("probing"):
+        return
+    state["probing"] = True
+    try:
+        snapshot = await _snapshot(cwd)
+    finally:
+        state.pop("probing", None)
     if snapshot is None:
         state["skipped"] = True
         return
@@ -154,27 +169,84 @@ async def _git_line_count(
 
 
 async def _git(cwd: str | Path, args: list[str]) -> str | None:
-    """Run one git command; ``None`` means "git is unavailable here"."""
+    """Run one read-only git probe; ``None`` means "git is unavailable here".
 
+    ``stdout`` goes to a temporary file instead of a pipe.  The ``git.exe`` on
+    PATH is a wrapper that starts the real ``git.exe`` as a child, and the
+    child inherits the wrapper's handles: if the wrapper is killed after a
+    timeout, an orphan can keep a pipe's write end open forever, so
+    ``communicate()`` never sees EOF and its cancellation hangs with no timer
+    left to rescue the turn.  A file has no EOF contract, so ``wait()`` and
+    the timeout always resolve.  ``stdin`` is closed for the same reason —
+    these probes must never read (or inherit) the TUI's protocol pipe.
+    """
+
+    with tempfile.TemporaryFile() as output:
+        try:
+            process = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    "git",
+                    *args,
+                    cwd=str(cwd),
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    # A process group lets the timeout kill the whole tree on
+                    # POSIX; Windows gets the same effect from taskkill /T.
+                    start_new_session=sys.platform != "win32",
+                ),
+                timeout=GIT_TIMEOUT_SECONDS,
+            )
+        except (OSError, ValueError, TimeoutError):
+            return None
+        try:
+            await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT_SECONDS)
+        except TimeoutError:
+            await _kill_process_tree(process)
+            try:
+                await asyncio.wait_for(
+                    process.wait(), timeout=GIT_TIMEOUT_SECONDS
+                )
+            except TimeoutError:
+                return None
+            return None
+        if process.returncode != 0:
+            return None
+        output.seek(0)
+        return output.read().decode("utf-8", errors="replace")
+
+
+async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Kill *process* and any wrapper child it left behind.
+
+    Windows has no process groups to signal, and the git wrapper forwards its
+    handles to a grandchild, so killing only the direct child can leave that
+    grandchild holding the workspace's pipes.  ``taskkill /T`` walks the tree
+    before the orphan can outlive the timeout.
+    """
+    if process.returncode is not None:
+        return
     try:
-        process = await asyncio.create_subprocess_exec(
-            "git",
-            *args,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except (OSError, ValueError):
-        return None
+        if sys.platform == "win32":
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/F",
+                "/T",
+                "/PID",
+                str(process.pid),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(killer.wait(), timeout=GIT_TIMEOUT_SECONDS)
+        else:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (OSError, ValueError, TimeoutError):
+        pass
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=GIT_TIMEOUT_SECONDS)
-    except TimeoutError:
         process.kill()
-        await process.wait()
-        return None
-    if process.returncode != 0:
-        return None
-    return stdout.decode("utf-8", errors="replace")
+    except OSError:
+        pass
 
 
 __all__ = [

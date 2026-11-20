@@ -335,14 +335,15 @@ test('a finished answer stays visible when a long checklist is showing', async (
 
 		const visible = harness.screen.visible(24);
 		// The answer must still be on screen after the turn settles: either in full
-		// or folded with a "… more lines" hint. Losing it silently is the bug.
+		// or with its head folded behind an "… earlier lines" hint.  The conclusion
+		// is what the user waited for, so the folded part must never be the tail.
 		assert.ok(
-			visible.includes(answerLines[0]),
-			`the answer should still be on screen after the turn finished:\n${visible}`,
+			visible.includes(answerLines[answerLines.length - 1]),
+			`the end of the answer should still be on screen after the turn finished:\n${visible}`,
 		);
 		const shown = answerLines.filter((line) => visible.includes(line)).length;
 		assert.ok(
-			shown === answerLines.length || /more lines/.test(visible),
+			shown === answerLines.length || /earlier lines/.test(visible),
 			`only ${shown}/${answerLines.length} answer lines are visible and there is no truncation hint`,
 		);
 		// The checklist is capped so it cannot eat the frame the answer lives in.

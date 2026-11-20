@@ -7,7 +7,14 @@ import {useTerminalSize} from '../hooks/useTerminalSize.js';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {MarkdownText} from './MarkdownText.js';
-import {ToolCallDisplay, summarizeToolInput} from './ToolCallDisplay.js';
+import {
+	TOOL_DIFF_PREVIEW_ROWS,
+	TOOL_OUTPUT_PREVIEW_ROWS,
+	ToolCallDisplay,
+	buildEditPreview,
+	buildToolOutputPreview,
+	summarizeToolInput,
+} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
 
 export type ToolPair = readonly [TranscriptItem, TranscriptItem];
@@ -97,6 +104,16 @@ export function TranscriptRow({
 				item={toolItem}
 				resultItem={resultItem}
 				outputStyle={outputStyle}
+				maxDiffRows={
+					maxTextRows
+						? Math.min(TOOL_DIFF_PREVIEW_ROWS, Math.max(2, maxTextRows - 2))
+						: TOOL_DIFF_PREVIEW_ROWS
+				}
+				maxOutputRows={
+					maxTextRows
+						? Math.min(TOOL_OUTPUT_PREVIEW_ROWS, Math.max(2, maxTextRows - 2))
+						: TOOL_OUTPUT_PREVIEW_ROWS
+				}
 			/>
 		);
 	}
@@ -194,12 +211,13 @@ function truncateTailToWidth(text: string, width: number): string {
 }
 
 /**
- * Bound a *streaming* buffer to the rows it can occupy, keeping its tail.
+ * Bound a *live* answer to the rows it can occupy, keeping its tail.
  *
- * `clampWrappedText` keeps the head, which is right for finished messages (they
- * are read from the top) and wrong for a live buffer: while a turn streams the
- * newest text is the part being read, so trimming the end means the user watches
- * the start of an answer that keeps growing below the fold.
+ * `clampWrappedText` keeps the head, which is right for user/system/log rows
+ * (they are read from the top).  An assistant answer is different: while it
+ * streams, and when it has just finished, the newest text is the part the user
+ * is waiting for, so trimming the end hides the conclusion behind a
+ * "… N more lines" hint.  Scrollback still keeps the full text.
  */
 function clampWrappedTail(
 	text: string,
@@ -239,12 +257,52 @@ function estimateGroupRows(
 		)
 			.replace(/\s+/g, ' ')
 			.trim();
-		let rows = wrappedRows(`${toolName} ${summary}`, width) + 1;
+		let rows = wrappedRows(`${toolName} ${summary}`, width);
 		if (result?.is_error) {
 			rows += Math.min(
 				5,
 				Math.max(1, result.text.split('\n').filter((line) => line.trim()).length),
 			);
+		} else if (result) {
+			// Count the same preview block the row renders, so the live-frame
+			// budget does not include a group that then overflows.
+			const previewLimit = Math.min(
+				TOOL_DIFF_PREVIEW_ROWS,
+				Math.max(2, maxTextRows - 2),
+			);
+			const edit = buildEditPreview(toolName, tool.tool_input, result, previewLimit);
+			if (edit) {
+				rows += 1; // "Added N lines, removed M lines"
+				const numbers = edit.rows
+					.flatMap((row) => [row.oldLine, row.newLine])
+					.filter((line): line is number => typeof line === 'number');
+				const numberWidth = Math.max(3, ...numbers.map((line) => String(line).length));
+				for (const row of edit.rows) {
+					const marker = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' ';
+					const lineNo = row.kind === 'del' ? row.oldLine : row.newLine;
+					const gutter = `     ${lineNo != null ? `${String(lineNo).padStart(numberWidth)} ` : ''}${marker}`;
+					rows += wrappedRows(`${gutter}${row.text}`, width);
+				}
+				if (edit.hidden > 0) {
+					rows += 1;
+				}
+			} else if (toolName.toLowerCase() === 'bash') {
+				const outputLimit = Math.min(
+					TOOL_OUTPUT_PREVIEW_ROWS,
+					Math.max(2, maxTextRows - 2),
+				);
+				const output = buildToolOutputPreview(toolName, result, outputLimit);
+				if (output) {
+					for (const line of output.lines) {
+						rows += wrappedRows(`     ${line}`, width);
+					}
+					if (output.hidden > 0) {
+						rows += 1;
+					}
+				}
+			} else {
+				rows += 1; // one-line result summary
+			}
 		}
 		return rows;
 	}
@@ -488,6 +546,16 @@ function MessageRow({
 		const clipped = clampWrappedText(text, rowBudget, wrapWidth);
 		return {text: clipped.text, truncated: clipped.hidden};
 	};
+	// Assistant answers keep their tail in the live frame instead of their head:
+	// the conclusion is what the user just waited for, and a head clamp made it
+	// look as if the end of the final answer had been folded away.
+	const limitRowsTail = (text: string): {text: string; truncated: boolean} => {
+		if (!clamp) {
+			return {text, truncated: false};
+		}
+		const clipped = clampWrappedTail(text, rowBudget, wrapWidth);
+		return {text: clipped.text, truncated: clipped.hidden};
+	};
 
 	switch (item.role) {
 		case 'user': {
@@ -515,12 +583,12 @@ function MessageRow({
 		}
 
 		case 'assistant': {
-			const clamped = limitRows(item.text);
+			const clamped = limitRowsTail(item.text);
 			if (isCodexStyle) {
 				return (
 					<Box marginTop={0} marginBottom={0} flexDirection="column">
 						<Text>{clamped.text}</Text>
-						<TruncatedHint truncated={clamped.truncated} />
+						<TruncatedHint truncated={clamped.truncated} earlier />
 					</Box>
 				);
 			}
@@ -532,7 +600,7 @@ function MessageRow({
 					<Box marginLeft={2} flexDirection="column">
 						<MarkdownText content={clamped.text} />
 					</Box>
-					<TruncatedHint truncated={clamped.truncated} />
+					<TruncatedHint truncated={clamped.truncated} earlier />
 				</Box>
 			);
 		}
@@ -557,7 +625,14 @@ function MessageRow({
 
 		case 'tool':
 		case 'tool_result':
-			return <ToolCallDisplay item={item} outputStyle={outputStyle} />;
+			return (
+				<ToolCallDisplay
+					item={item}
+					outputStyle={outputStyle}
+					maxDiffRows={Math.min(TOOL_DIFF_PREVIEW_ROWS, Math.max(2, rowBudget - 2))}
+					maxOutputRows={Math.min(TOOL_OUTPUT_PREVIEW_ROWS, Math.max(2, rowBudget - 2))}
+				/>
+			);
 
 		case 'system': {
 			// Command output keeps its clamp even in scrollback: oversized output

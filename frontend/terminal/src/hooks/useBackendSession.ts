@@ -282,9 +282,10 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			lastStatusSnapshotRef.current = statusSnapshot;
 			const nextStatus = event.state ?? {};
 			statusRef.current = nextStatus;
-			startTransition(() => {
-				setStatus(nextStatus);
-			});
+			// Status is small and changes at most a few times per turn; painting
+			// it urgently keeps the ctx meter in step with the backend instead of
+			// letting a busy streaming render starve a low-priority transition.
+			setStatus(nextStatus);
 			const tasksSnapshot = stableStringify(event.tasks ?? []);
 			lastTasksSnapshotRef.current = tasksSnapshot;
 			startTransition(() => {
@@ -316,9 +317,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				lastStatusSnapshotRef.current = statusSnapshot;
 				const nextStatus = event.state ?? {};
 				statusRef.current = nextStatus;
-				startTransition(() => {
-					setStatus(nextStatus);
-				});
+				setStatus(nextStatus);
 			}
 			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
 			if (mcpSnapshot !== lastMcpSnapshotRef.current) {
@@ -597,12 +596,10 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'plan_mode_change') {
 			if (event.plan_mode != null) {
-				startTransition(() => {
-					setStatus((s) => {
-						const next = {...s, permission_mode: event.plan_mode};
-						statusRef.current = next;
-						return next;
-					});
+				setStatus((s) => {
+					const next = {...s, permission_mode: event.plan_mode};
+					statusRef.current = next;
+					return next;
 				});
 			}
 			return;

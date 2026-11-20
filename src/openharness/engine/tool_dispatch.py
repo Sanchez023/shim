@@ -127,6 +127,8 @@ def offload_tool_output_if_needed(
         f"Tool use id: {tool_use_id}\n"
         f"Original size: {len(output)} chars\n"
         f"Full output saved to: {artifact_path}\n"
+        "Read it with the read_file tool (use offset/limit to page through it) "
+        "instead of printing the whole file.\n"
         f"Inline preview: first {len(preview)} chars"
     )
     if omitted:

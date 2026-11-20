@@ -81,14 +81,15 @@ const resultItem = {
 	is_error: false,
 };
 
-test('collapsed tool output points at ctrl+o and hides result lines', async () => {
+test('a completed bash call previews the output block', async () => {
 	const output = await renderOutput(
 		<ToolCallDisplay item={toolItem} resultItem={resultItem} outputStyle="default" />,
 	);
 
-	assert.match(output, /\(ctrl\+o to expand\)/);
-	assert.doesNotMatch(output, /click to expand/);
-	assert.doesNotMatch(output, /alpha-result/);
+	assert.match(output, /Bash\(ls\)/);
+	assert.match(output, /alpha-result/);
+	assert.match(output, /epsilon-result/);
+	assert.doesNotMatch(output, /\(ctrl\+o to expand\)/);
 });
 
 test('truncated error results advertise the transcript viewer', async () => {
@@ -116,11 +117,11 @@ test('summarizes file tools with the actual input keys', () => {
 	);
 });
 
-test('shows edit diffstat and tool duration', async () => {
+test('shows an accurate edit diffstat, the line diff and the duration', async () => {
 	const editItem = {
 		role: 'tool' as const,
 		tool_name: 'edit_file',
-		tool_input: {path: 'src/app.ts', old_str: 'a\nb', new_str: 'a\nb\nc'},
+		tool_input: {path: 'src/app.ts', old_str: 'alpha\nbeta', new_str: 'alpha\ngamma'},
 		text: 'edit_file',
 		duration_ms: 2400,
 	};
@@ -128,14 +129,131 @@ test('shows edit diffstat and tool duration', async () => {
 	const output = await renderOutput(
 		<ToolCallDisplay
 			item={editItem}
-			resultItem={{...resultItem, text: ''}}
+			resultItem={{...resultItem, text: 'Updated src/app.ts'}}
 			outputStyle="default"
 		/>,
 	);
 
-	assert.match(output, /\+3/);
-	assert.match(output, /-2/);
+	// The diff counts only the changed lines; counting every line of old/new
+	// overstates a one-line replacement.
+	assert.match(output, /Added 1 line, removed 1 line/);
 	assert.match(output, /2\.4s/);
+	assert.match(output, /Update\(src\/app\.ts\)/);
+	assert.match(output, /-beta/);
+	assert.match(output, /\+gamma/);
+});
+
+test('write_file previews its new lines as additions', async () => {
+	const writeItem = {
+		role: 'tool' as const,
+		tool_name: 'write_file',
+		tool_input: {path: 'src/new.ts', content: 'first\nsecond'},
+		text: 'write_file',
+	};
+
+	const output = await renderOutput(
+		<ToolCallDisplay
+			item={writeItem}
+			resultItem={{...resultItem, text: 'Wrote src/new.ts'}}
+			outputStyle="default"
+		/>,
+	);
+
+	assert.match(output, /Added 2 lines, removed 0 lines/);
+	assert.match(output, /\+first/);
+	assert.match(output, /\+second/);
+	assert.match(output, /Write\(src\/new\.ts\)/);
+});
+
+test('renders the unified diff with real file line numbers and context', async () => {
+	const editItem = {
+		role: 'tool' as const,
+		tool_name: 'edit_file',
+		tool_input: {path: 'src/app.ts', old_str: 'removed line', new_str: 'added line\nextra line'},
+		text: 'edit_file',
+	};
+	const diff = [
+		'@@ -176,2 +176,3 @@',
+		' context line',
+		'-removed line',
+		'+added line',
+		'+extra line',
+	].join('\n');
+
+	const output = await renderOutput(
+		<ToolCallDisplay
+			item={editItem}
+			resultItem={{
+				...resultItem,
+				text: 'Updated src/app.ts',
+				metadata: {diff, diff_added: 2, diff_removed: 1},
+			}}
+			outputStyle="default"
+		/>,
+	);
+
+	assert.match(output, /Added 2 lines, removed 1 line/);
+	assert.match(output, /177 -removed line/);
+	assert.match(output, /177 \+added line/);
+	assert.match(output, /178 \+extra line/);
+	assert.match(output, /176  context line/);
+	assert.match(output, /Update\(src\/app\.ts\)/);
+});
+
+test('bash previews the tail of a long output with an earlier-lines hint', async () => {
+	const lines = Array.from({length: 8}, (_, index) => `out-${index + 1}`).join('\n');
+	const output = await renderOutput(
+		<ToolCallDisplay
+			item={{role: 'tool', tool_name: 'bash', tool_input: {command: 'make'}, text: 'bash'}}
+			resultItem={{...resultItem, text: lines}}
+			outputStyle="default"
+		/>,
+	);
+
+	assert.match(output, /out-4/);
+	assert.match(output, /out-8/);
+	assert.doesNotMatch(output, /out-1\b/);
+	assert.match(output, /3 earlier lines · ctrl\+o full transcript/);
+});
+
+test('summarizes the result of read, grep and bash calls', async () => {
+	const readOutput = await renderOutput(
+		<ToolCallDisplay
+			item={{role: 'tool', tool_name: 'read_file', tool_input: {path: 'a.ts'}, text: 'read_file'}}
+			resultItem={{...resultItem, text: 'line1\nline2\nline3'}}
+			outputStyle="default"
+		/>,
+	);
+	assert.match(readOutput, /Read 3 lines/);
+
+	const grepOutput = await renderOutput(
+		<ToolCallDisplay
+			item={{role: 'tool', tool_name: 'grep', tool_input: {pattern: 'ctx'}, text: 'grep'}}
+			resultItem={{...resultItem, text: 'a.ts:1:ctx\nb.ts:2:ctx'}}
+			outputStyle="default"
+		/>,
+	);
+	assert.match(grepOutput, /2 matches/);
+});
+
+test('a failed edit does not preview an unapplied diff', async () => {
+	const editItem = {
+		role: 'tool' as const,
+		tool_name: 'edit_file',
+		tool_input: {path: 'src/app.ts', old_str: 'alpha\nbeta', new_str: 'alpha\ngamma'},
+		text: 'edit_file',
+	};
+
+	const output = await renderOutput(
+		<ToolCallDisplay
+			item={editItem}
+			resultItem={{...resultItem, text: 'old_str was not found in the file', is_error: true}}
+			outputStyle="default"
+		/>,
+	);
+
+	assert.match(output, /old_str was not found/);
+	assert.doesNotMatch(output, /\+gamma/);
 });
 
 

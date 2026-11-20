@@ -49,6 +49,63 @@ async def test_baseline_is_captured_once(tmp_path: Path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_tool_calls_share_one_baseline_probe(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Two tools finishing together must not spawn two git probes at once.
+
+    Concurrent `git worktree list` processes deadlocked Git for Windows in the
+    field; the second caller can simply move on because the baseline is
+    best-effort and the first probe will record it.
+    """
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def snapshot(path: object) -> session_hygiene.WorkspaceSnapshot:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return session_hygiene.WorkspaceSnapshot(worktrees=1, stashes=0)
+
+    monkeypatch.setattr(session_hygiene, "_snapshot", snapshot)
+    metadata: dict[str, object] = {}
+
+    probe = asyncio.create_task(session_hygiene.ensure_baseline(metadata, tmp_path))
+    await started.wait()
+
+    await session_hygiene.ensure_baseline(metadata, tmp_path)
+    assert calls == 1
+    assert metadata[session_hygiene.HYGIENE_KEY]["probing"] is True
+
+    release.set()
+    await probe
+
+    assert calls == 1
+    assert metadata[session_hygiene.HYGIENE_KEY]["baseline"] == {"worktrees": 1, "stashes": 0}
+    assert "probing" not in metadata[session_hygiene.HYGIENE_KEY]
+
+
+@pytest.mark.asyncio
+async def test_git_probe_never_inherits_the_protocol_pipe(monkeypatch) -> None:
+    """A wrapper/orphan git must not be able to hold the TUI's pipes open."""
+
+    captured: dict[str, object] = {}
+
+    async def fake_spawn(*args, **kwargs):
+        captured.update(kwargs)
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+
+    assert await session_hygiene._git(".", ["worktree", "list"]) is None
+    assert captured["stdin"] is asyncio.subprocess.DEVNULL
+    assert captured["stderr"] is asyncio.subprocess.DEVNULL
+    assert asyncio.subprocess.PIPE not in captured.values()
+
+
+@pytest.mark.asyncio
 async def test_nothing_new_reports_nothing(tmp_path: Path, monkeypatch) -> None:
     async def snapshot(path: object) -> session_hygiene.WorkspaceSnapshot:
         return session_hygiene.WorkspaceSnapshot(worktrees=1, stashes=0)

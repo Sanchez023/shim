@@ -25,6 +25,7 @@ from openharness.domain.stream_events import (
     AssistantThinkingDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    ContextChangedEvent,
     ErrorEvent,
     StatusEvent,
     StreamEvent,
@@ -433,6 +434,16 @@ class ReactBackendHost(TurnLifecycleMixin):
                     )
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+                # The response is part of the model-visible history now, and the
+                # usage counters just moved: keep the ctx meter in step.
+                await self._emit(self._status_snapshot())
+                return
+            if isinstance(event, ContextChangedEvent):
+                # A user prompt or a batch of tool results was appended to the
+                # history the next request will carry. Refresh immediately so
+                # the status bar does not sit on a stale value for the whole
+                # next model round-trip.
+                await self._emit(self._status_snapshot())
                 return
             if isinstance(event, ToolExecutionStarted):
                 self._last_tool_inputs[event.tool_name] = event.tool_input or {}
@@ -466,6 +477,7 @@ class ReactBackendHost(TurnLifecycleMixin):
                             tool_name=event.tool_name,
                             tool_use_id=event.tool_use_id or None,
                             is_error=event.is_error,
+                            metadata=event.metadata,
                         ),
                     )
                 )
@@ -667,7 +679,12 @@ class ReactBackendHost(TurnLifecycleMixin):
         # The model request also carries the system prompt and tool schemas;
         # counting only the conversation made the meter read far below the
         # real occupancy (e.g. 581/200k while ~5k was actually in flight).
-        context_tokens = estimate_message_tokens(self._bundle.engine.messages)
+        # A running turn appends to its own working list and copies it into the
+        # session at the end, so the plain ``messages`` view is a turn behind.
+        history = getattr(self._bundle.engine, "working_messages", None)
+        if history is None:
+            history = self._bundle.engine.messages
+        context_tokens = estimate_message_tokens(history)
         system_prompt = self._bundle.engine.system_prompt or ""
         if system_prompt:
             context_tokens += estimate_tokens(system_prompt)

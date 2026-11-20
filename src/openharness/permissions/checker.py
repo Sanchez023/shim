@@ -37,9 +37,17 @@ SENSITIVE_PATH_PATTERNS: tuple[str, ...] = (
     "*/.openharness/credentials.json",
     "*/.openharness/copilot_auth.json",
     # Harness state that grants privileges: writing permission.mode here would
-    # persist an escalation past the end of the session.
-    "*/.openharness/settings.json",
+    # persist an escalation past the end of the session.  The wildcard also
+    # covers the automatic ``settings.json.bak-*`` backups, which carry the
+    # same provider credentials as the live file.
+    "*/.openharness/settings.json*",
+    # Session transcripts, raw user pastes and logs can contain whatever the
+    # session saw, including secrets.  Keep both the legacy layout and the
+    # current data-dir layout.
     "*/.openharness/sessions/*",
+    "*/.openharness/data/sessions/*",
+    "*/.openharness/data/user_pastes/*",
+    "*/.openharness/logs/*",
     # Package-registry and HTTP credentials
     "*/.netrc",
     "*/.pypirc",

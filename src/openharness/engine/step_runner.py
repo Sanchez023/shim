@@ -28,6 +28,7 @@ from openharness.domain.stream_events import (
     AssistantTextDelta,
     AssistantThinkingDelta,
     AssistantTurnComplete,
+    ContextChangedEvent,
     ErrorEvent,
     StatusEvent,
     StreamEvent,
@@ -540,6 +541,9 @@ class StepRunner:
             content=cast(list[ContentBlock], [*tool_results, *tool_images]),
         )
         messages.append(tool_results_message)
+        # The next request carries these results, so refresh context meters now
+        # instead of after the model's next (possibly slow) response.
+        yield ContextChangedEvent(), None
         await _emit_event(
             context,
             "user.message",

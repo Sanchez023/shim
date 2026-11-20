@@ -19,7 +19,7 @@ from openharness.domain.messages import (
     ToolResultBlock,
     sanitize_conversation_messages,
 )
-from openharness.domain.stream_events import StreamEvent
+from openharness.domain.stream_events import ContextChangedEvent, StreamEvent
 from openharness.domain.usage import UsageSnapshot
 from openharness.engine.cache_controller import CacheController
 from openharness.engine.cache_diagnostics import CacheDiagnostics
@@ -187,6 +187,10 @@ class QueryEngine:
         # the permission mode, so the very next model request in the same turn
         # sees the new system prompt (plan mode guidance, etc.).
         self._active_context: QueryContext | None = None
+        # The mutable message list a running turn appends to.  It is only
+        # copied into the session at turn end, so live UI estimates need this
+        # view to see tool results and assistant messages as they land.
+        self._active_messages: list[ConversationMessage] | None = None
         # Messages typed while a turn is already streaming; the turn loop
         # drains them at the next step boundary.
         self._pending_user_messages: list[ConversationMessage] = []
@@ -200,6 +204,19 @@ class QueryEngine:
     def messages(self) -> list[ConversationMessage]:
         """Return the current conversation history."""
         return self._session.messages
+
+    @property
+    def working_messages(self) -> list[ConversationMessage]:
+        """Return the model-visible history, including a turn in flight.
+
+        A running turn appends to its own working list and only copies it into
+        the session at the end.  Read-only observers such as the TUI context
+        meter use this view so they see each assistant message and tool-result
+        batch as it becomes part of the next request.
+        """
+        if self._active_messages is not None:
+            return self._active_messages
+        return self._session.working_messages
 
     @property
     def max_turns(self) -> int | None:
@@ -774,8 +791,12 @@ class QueryEngine:
         coordinator_context = self._build_coordinator_context_message()
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
+        self._active_messages = query_messages
         status = "completed"
         try:
+            # Let the UI refresh its context meter before waiting on the model:
+            # the user prompt is already part of the model-visible history.
+            yield ContextChangedEvent()
             async for event, usage in TurnExecutor(context).execute(query_messages):
                 if usage is not None:
                     self._session.add_usage(usage)
@@ -791,6 +812,7 @@ class QueryEngine:
             raise
         finally:
             self._active_context = None
+            self._active_messages = None
             # Commit only after the turn finishes so tool results appended
             # after AssistantTurnComplete are included. With an event log the
             # cache is re-derived from the log instead of the working list.
@@ -820,11 +842,11 @@ class QueryEngine:
             max_turns=max_turns if max_turns is not None else self._max_turns,
         )
         self._active_context = context
+        working_messages = self._session.working_messages
+        self._active_messages = working_messages
         status = "completed"
         try:
-            async for event, usage in TurnExecutor(context).execute(
-                self._session.working_messages
-            ):
+            async for event, usage in TurnExecutor(context).execute(working_messages):
                 if usage is not None:
                     self._session.add_usage(usage)
                 yield event
@@ -836,6 +858,7 @@ class QueryEngine:
             raise
         finally:
             self._active_context = None
+            self._active_messages = None
             await self._emit_event(
                 "turn.end",
                 {"status": status, "continuation": True},

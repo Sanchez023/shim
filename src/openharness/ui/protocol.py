@@ -72,6 +72,8 @@ class TranscriptItem(BaseModel):
     tool_use_id: str | None = None
     tool_input: dict[str, Any] | None = None
     is_error: bool | None = None
+    # Tool-result metadata (e.g. the unified diff and counts for an edit).
+    metadata: dict[str, Any] | None = None
 
 
 class TaskSnapshot(BaseModel):

@@ -35,16 +35,32 @@ _PREVIEW_STOPWORDS = {
     "with",
 }
 
+def _as_mapping(value: object) -> dict[str, object]:
+    """Narrow an untrusted value to a string-keyed mapping (empty when it is not one)."""
+    return value if isinstance(value, dict) else {}
+
+def _as_list(value: object) -> list[object]:
+    """Narrow an untrusted value to a list of items (empty when it is not one)."""
+    return value if isinstance(value, list) else []
+
+def _as_int(value: object, default: int = 0) -> int:
+    """Narrow an untrusted value to an int, rejecting bools masquerading as ints."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+def _as_str(value: object, default: str = "") -> str:
+    """Narrow an untrusted value to a str (``default`` when it is not one)."""
+    return value if isinstance(value, str) else default
+
 def _schema_argument_preview(tool_schema: dict[str, object]) -> dict[str, object]:
-    input_schema = tool_schema.get("input_schema")
-    if not isinstance(input_schema, dict):
+    input_schema = _as_mapping(tool_schema.get("input_schema"))
+    if not input_schema:
         return {"required_args": [], "optional_args": []}
-    properties = input_schema.get("properties")
-    if not isinstance(properties, dict):
+    properties = _as_mapping(input_schema.get("properties"))
+    if not properties:
         return {"required_args": [], "optional_args": []}
     required_raw = input_schema.get("required")
     required = (
-        sorted(str(name) for name in required_raw if isinstance(name, str))
+        sorted(str(name) for name in _as_list(required_raw) if isinstance(name, str))
         if isinstance(required_raw, list)
         else []
     )
@@ -262,8 +278,8 @@ def _recommend_preview_candidates(
 
     tool_matches: list[dict[str, object]] = []
     for tool in tool_schemas:
-        optional = ", ".join(str(item) for item in tool.get("optional_args") or [])
-        required = ", ".join(str(item) for item in tool.get("required_args") or [])
+        optional = ", ".join(str(item) for item in _as_list(tool.get("optional_args")))
+        required = ", ".join(str(item) for item in _as_list(tool.get("required_args")))
         score, reasons = _score_candidate_match(
             stripped,
             str(tool.get("name") or ""),
@@ -287,7 +303,7 @@ def _recommend_preview_candidates(
             stripped,
             str(command.get("name") or ""),
             str(command.get("description") or ""),
-            str(command.get("behavior", {}).get("detail") or ""),
+            _as_str(_as_mapping(command.get("behavior")).get("detail")),
         )
         if score >= 8:
             command_matches.append(
@@ -299,9 +315,9 @@ def _recommend_preview_candidates(
                 )
             )
 
-    skill_matches.sort(key=lambda entry: (-int(entry["score"]), str(entry["name"])))
-    tool_matches.sort(key=lambda entry: (-int(entry["score"]), str(entry["name"])))
-    command_matches.sort(key=lambda entry: (-int(entry["score"]), str(entry["name"])))
+    skill_matches.sort(key=lambda entry: (-_as_int(entry["score"]), _as_str(entry["name"])))
+    tool_matches.sort(key=lambda entry: (-_as_int(entry["score"]), _as_str(entry["name"])))
+    command_matches.sort(key=lambda entry: (-_as_int(entry["score"]), _as_str(entry["name"])))
     return {
         "skills": skill_matches[:5],
         "tools": tool_matches[:8],
@@ -335,13 +351,13 @@ def _evaluate_dry_run_readiness(
             reasons.append("Runtime client resolution failed. Interactive commands may still work, but model execution would fail.")
             next_actions.append("If you expect a model call later, fix authentication or provider profile configuration first.")
 
-    mcp_errors = int(validation.get("mcp_errors") or 0)
+    mcp_errors = _as_int(validation.get("mcp_errors"), 0)
     if mcp_errors > 0 and level != "blocked":
         level = "warning"
         reasons.append(f"{mcp_errors} configured MCP server(s) have obvious configuration errors.")
         next_actions.append("Fix or disable the broken MCP server configuration before relying on MCP-backed tools.")
 
-    auth_status = str(validation.get("auth_status") or "")
+    auth_status = _as_str(validation.get("auth_status"))
     if auth_status.startswith("missing") and entrypoint.get("kind") in {"interactive_session", "model_prompt"} and level != "blocked":
         level = "warning"
         reasons.append("Authentication is missing, so live model execution would not start successfully.")
@@ -519,7 +535,7 @@ def _build_dry_run_preview(
             "detail": "OpenHarness would start and wait for user input. No model or tool call happens until you submit one.",
         }
 
-    preview = {
+    preview: dict[str, object] = {
         "mode": "dry-run",
         "cwd": resolved_cwd,
         "config_path": str(get_config_file_path()),
@@ -575,26 +591,32 @@ def _build_dry_run_preview(
         ],
         "system_prompt_preview": _safe_short(system_prompt_text, limit=600),
     }
-    mcp_errors = sum(1 for entry in preview["mcp_servers"] if entry.get("status") == "error")
-    preview["validation"]["mcp_errors"] = mcp_errors
+    mcp_errors = sum(
+        1
+        for entry in _as_list(preview.get("mcp_servers"))
+        if _as_mapping(entry).get("status") == "error"
+    )
+    validation_summary = _as_mapping(preview.get("validation"))
+    validation_summary["mcp_errors"] = mcp_errors
+    preview["validation"] = validation_summary
     preview["readiness"] = _evaluate_dry_run_readiness(
         prompt=preview_prompt,
-        entrypoint=preview["entrypoint"],
-        validation=preview["validation"],
+        entrypoint=_as_mapping(preview.get("entrypoint")),
+        validation=validation_summary,
     )
     return preview
 
 def _format_dry_run_preview(preview: dict[str, object]) -> str:
-    settings = preview.get("settings") if isinstance(preview.get("settings"), dict) else {}
-    validation = preview.get("validation") if isinstance(preview.get("validation"), dict) else {}
-    entrypoint = preview.get("entrypoint") if isinstance(preview.get("entrypoint"), dict) else {}
-    readiness = preview.get("readiness") if isinstance(preview.get("readiness"), dict) else {}
-    recommendations = preview.get("recommendations") if isinstance(preview.get("recommendations"), dict) else {}
-    plugins = preview.get("plugins") if isinstance(preview.get("plugins"), list) else []
-    skills = preview.get("skills") if isinstance(preview.get("skills"), list) else []
-    commands = preview.get("commands") if isinstance(preview.get("commands"), list) else []
-    tools = preview.get("tools") if isinstance(preview.get("tools"), list) else []
-    mcp_servers = preview.get("mcp_servers") if isinstance(preview.get("mcp_servers"), list) else []
+    settings = _as_mapping(preview.get("settings"))
+    validation = _as_mapping(preview.get("validation"))
+    entrypoint = _as_mapping(preview.get("entrypoint"))
+    readiness = _as_mapping(preview.get("readiness"))
+    recommendations = _as_mapping(preview.get("recommendations"))
+    plugins = _as_list(preview.get("plugins"))
+    skills = _as_list(preview.get("skills"))
+    commands = _as_list(preview.get("commands"))
+    tools = _as_list(preview.get("tools"))
+    mcp_servers = _as_list(preview.get("mcp_servers"))
 
     lines = [
         "OpenHarness Dry Run",
@@ -632,7 +654,7 @@ def _format_dry_run_preview(preview: dict[str, object]) -> str:
         "",
         "Validation",
         f"- auth: {validation.get('auth_status')}",
-        f"- api client: {validation.get('api_client', {}).get('status', 'unknown')}",
+        f"- api client: {_as_mapping(validation.get('api_client')).get('status', 'unknown')}",
         f"- system prompt chars: {validation.get('system_prompt_chars')}",
         f"- mcp: {validation.get('mcp_validation')}",
         f"- mcp config errors: {validation.get('mcp_errors', 0)}",
@@ -649,13 +671,14 @@ def _format_dry_run_preview(preview: dict[str, object]) -> str:
     if mcp_servers:
         lines.extend(["", "Configured MCP"])
         for entry in mcp_servers[:8]:
-            status = entry.get("status") or "unknown"
+            entry_map = _as_mapping(entry)
+            status = entry_map.get("status") or "unknown"
             suffix = ""
-            issues = entry.get("issues")
-            if isinstance(issues, list) and issues:
+            issues = _as_list(entry_map.get("issues"))
+            if issues:
                 suffix = f" [{'; '.join(str(item) for item in issues)}]"
             lines.append(
-                f"- {entry.get('name')}: {entry.get('transport')} -> {entry.get('target')} ({status}){suffix}"
+                f"- {entry_map.get('name')}: {entry_map.get('transport')} -> {entry_map.get('target')} ({status}){suffix}"
             )
         if len(mcp_servers) > 8:
             lines.append(f"- ... (+{len(mcp_servers) - 8} more)")
@@ -663,48 +686,53 @@ def _format_dry_run_preview(preview: dict[str, object]) -> str:
     if tools:
         lines.extend(["", "Available Tools"])
         for entry in tools[:12]:
-            required = entry.get("required_args") or []
-            optional = entry.get("optional_args") or []
+            entry_map = _as_mapping(entry)
+            required = _as_list(entry_map.get("required_args"))
+            optional = _as_list(entry_map.get("optional_args"))
             signature_parts: list[str] = []
             if required:
-                signature_parts.append("required: " + ", ".join(required))
+                signature_parts.append("required: " + ", ".join(str(item) for item in required))
             if optional:
-                signature_parts.append("optional: " + ", ".join(optional[:4]))
+                signature_parts.append("optional: " + ", ".join(str(item) for item in optional[:4]))
             suffix = f" ({'; '.join(signature_parts)})" if signature_parts else ""
-            lines.append(f"- {entry.get('name')}{suffix}")
+            lines.append(f"- {entry_map.get('name')}{suffix}")
         if len(tools) > 12:
             lines.append(f"- ... (+{len(tools) - 12} more)")
 
     if skills:
         lines.extend(["", "Available Skills"])
         for entry in skills[:8]:
-            lines.append(f"- {entry.get('name')}: {_safe_short(str(entry.get('description') or ''), limit=100)}")
+            entry_map = _as_mapping(entry)
+            lines.append(f"- {entry_map.get('name')}: {_safe_short(_as_str(entry_map.get('description')), limit=100)}")
         if len(skills) > 8:
             lines.append(f"- ... (+{len(skills) - 8} more)")
 
-    recommended_skills = recommendations.get("skills") if isinstance(recommendations.get("skills"), list) else []
-    recommended_tools = recommendations.get("tools") if isinstance(recommendations.get("tools"), list) else []
-    recommended_commands = recommendations.get("commands") if isinstance(recommendations.get("commands"), list) else []
+    recommended_skills = _as_list(recommendations.get("skills"))
+    recommended_tools = _as_list(recommendations.get("tools"))
+    recommended_commands = _as_list(recommendations.get("commands"))
     if recommended_skills or recommended_tools or recommended_commands:
         lines.extend(["", "Likely Matches"])
         if recommended_skills:
             lines.append("- skills:")
             for entry in recommended_skills[:4]:
-                reasons = ", ".join(str(item) for item in entry.get("reasons") or [])
+                entry_map = _as_mapping(entry)
+                reasons = ", ".join(str(item) for item in _as_list(entry_map.get("reasons")))
                 suffix = f" [{reasons}]" if reasons else ""
-                lines.append(f"  - {entry.get('name')} (score={entry.get('score')}){suffix}")
+                lines.append(f"  - {entry_map.get('name')} (score={entry_map.get('score')}){suffix}")
         if recommended_tools:
             lines.append("- tools:")
             for entry in recommended_tools[:6]:
-                reasons = ", ".join(str(item) for item in entry.get("reasons") or [])
+                entry_map = _as_mapping(entry)
+                reasons = ", ".join(str(item) for item in _as_list(entry_map.get("reasons")))
                 suffix = f" [{reasons}]" if reasons else ""
-                lines.append(f"  - {entry.get('name')} (score={entry.get('score')}){suffix}")
+                lines.append(f"  - {entry_map.get('name')} (score={entry_map.get('score')}){suffix}")
         if recommended_commands:
             lines.append("- slash commands:")
             for entry in recommended_commands[:4]:
-                reasons = ", ".join(str(item) for item in entry.get("reasons") or [])
+                entry_map = _as_mapping(entry)
+                reasons = ", ".join(str(item) for item in _as_list(entry_map.get("reasons")))
                 suffix = f" [{reasons}]" if reasons else ""
-                lines.append(f"  - /{entry.get('name')} (score={entry.get('score')}){suffix}")
+                lines.append(f"  - /{entry_map.get('name')} (score={entry_map.get('score')}){suffix}")
 
     if entrypoint.get("kind") == "slash_command":
         lines.extend(
